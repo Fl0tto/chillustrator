@@ -39,6 +39,10 @@ import { groupNodesCommand, ungroupCommand, alignCommand, type AlignEdge } from 
 import { importSvg, buildDocumentFromImport } from "@/importExport/importSvg";
 import { serializeSvg } from "@/importExport/serializeSvg";
 import { downloadText, svgFilename } from "@/importExport/download";
+import { runBoolean, booleanEligibility } from "@/interactions/booleanOps";
+import { convertToPathCommand } from "@/commands/geometryCommands";
+import { isConvertibleToPath } from "@/geometry/pathConvert";
+import type { BooleanOperation } from "@/geometry/booleanTypes";
 import { InspectorPanel } from "./panels/InspectorPanel";
 import { LayersPanel } from "./panels/LayersPanel";
 import { SourcePanel } from "./panels/SourcePanel";
@@ -50,6 +54,13 @@ const TOOLS: { id: ToolId; icon: React.ReactNode; title: string; key: string }[]
   { id: "line", icon: <Minus size={18} />, title: "Line", key: "L" },
   { id: "polygon", icon: <Hexagon size={18} />, title: "Polygon", key: "P" },
   { id: "text", icon: <Type size={18} />, title: "Text", key: "T" },
+];
+
+const BOOLEAN_BUTTONS: { op: BooleanOperation; label: string; title: string }[] = [
+  { op: "union", label: "U", title: "Union — merge shapes" },
+  { op: "subtract", label: "S", title: "Subtract — front shape cuts the back" },
+  { op: "intersect", label: "I", title: "Intersect — keep the overlap" },
+  { op: "exclude", label: "X", title: "Exclude — remove the overlap" },
 ];
 
 const ALIGN_BUTTONS: { edge: AlignEdge; label: string; title: string }[] = [
@@ -72,6 +83,38 @@ function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; s
   const clearSelection = useEditorStore((s) => s.clearSelection);
   const setPreferences = useEditorStore((s) => s.setPreferences);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const flash = (msg: string) => {
+    setNotice(msg);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 3000);
+  };
+
+  const onBoolean = (op: BooleanOperation) => {
+    if (busy) return;
+    setBusy(true);
+    runBoolean(op)
+      .then((r) => {
+        if (!r.ok && r.warning) flash(r.warning);
+      })
+      .finally(() => setBusy(false));
+  };
+
+  const onConvertToPath = () => {
+    const ids = useEditorStore.getState().selection;
+    const doc = useEditorStore.getState().document;
+    const targets = ids.filter((id) => {
+      const n = doc.nodes[id];
+      return n && n.type !== "path" && isConvertibleToPath(n);
+    });
+    if (targets.length === 0) return;
+    const newIds: string[] = [];
+    for (const id of targets) apply(convertToPathCommand(id, (nid) => newIds.push(nid)));
+    if (newIds.length) setSelection(newIds);
+  };
 
   const onImportFile = async (file: File) => {
     const text = await file.text();
@@ -97,6 +140,12 @@ function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; s
   const hasSel = selection.length > 0;
   const canGroup = selection.length >= 2;
   const canUngroup = selection.some((id) => useEditorStore.getState().document.nodes[id]?.type === "group");
+  const canBool =
+    selection.length >= 2 && booleanEligibility(useEditorStore.getState().document, selection).ok;
+  const canConvert = selection.some((id) => {
+    const n = useEditorStore.getState().document.nodes[id];
+    return n ? n.type !== "path" && isConvertibleToPath(n) : false;
+  });
 
   return (
     <div className="chill-toolbar">
@@ -165,6 +214,25 @@ function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; s
           </button>
         ))}
       </div>
+
+      <div className="group">
+        {BOOLEAN_BUTTONS.map((b) => (
+          <button
+            key={b.op}
+            className="btn"
+            title={b.title}
+            disabled={!canBool || busy}
+            onClick={() => onBoolean(b.op)}
+          >
+            {b.label}
+          </button>
+        ))}
+        <button className="btn" title="Convert to path" disabled={!canConvert} onClick={onConvertToPath}>
+          Path
+        </button>
+      </div>
+
+      {notice && <span className="chill-notice">{notice}</span>}
 
       <div className="spacer" style={{ flex: 1 }} />
 

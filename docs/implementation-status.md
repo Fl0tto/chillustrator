@@ -86,29 +86,29 @@ Legend: ✅ done · 🟡 partial · ⏳ in progress · ⬜ not started.
 | ALP-005  | Gradient-stop opacity     |      ⬜ | Required when gradients are introduced                               |
 | ALP-006  | Transparency preview      |      ⬜ | Checkerboard or configurable preview background                      |
 | ALP-007  | Alpha round-trip          |      ⬜ | Import → edit → export → reimport                                    |
-| PTH-000  | Canonical path model      |      ⬜ | Parsed geometry must become authoritative                            |
-| PTH-001  | Full SVG path parser      |      ⬜ | M/L/H/V/C/S/Q/T/A/Z, relative and absolute                           |
-| PTH-002  | Path serializer           |     🟡 | Existing `d` serialization must be connected to canonical geometry   |
-| PTH-003  | Complex path rendering    |     🟡 | Imported paths render; curves/subpaths require explicit verification |
-| PTH-004  | Accurate path bounds      |     🟡 | Verify cubic, quadratic, arc extrema and transformed groups          |
-| PTH-005  | Path hit testing          |     🟡 | Verify fill, stroke, holes and transformed groups                    |
-| CVP-001  | Rectangle to path         |      ⬜ | One undoable replacement                                             |
-| CVP-002  | Rounded rectangle to path |      ⬜ | Preserve curved corners                                             |
-| CVP-003  | Ellipse to path           |      ⬜ | Preserve curve geometry                                              |
-| CVP-004  | Polygon/star to path      |      ⬜ | Preserve exact vertices                                             |
-| CVP-005  | Line/stroke handling      |      ⬜ | Reject open geometry or outline stroke before booleans               |
-| BLN-000  | Geometry-engine adapter   |      ⬜ | Async, implementation-independent boundary                           |
-| BLN-001  | Union                     |      ⬜ | Destructive result PathNode                                          |
-| BLN-002  | Subtract front            |      ⬜ | Front-most selected operand subtracts                                |
-| BLN-003  | Intersect                 |      ⬜ | Preserve sources on empty result                                     |
-| BLN-004  | Exclude/XOR               |      ⬜ | Correct holes and fill rules                                         |
-| BLN-005  | Transform flattening      |      ⬜ | Resolve world and parent-local coordinates                           |
-| BLN-006  | Compound paths            |      ⬜ | Multiple contours and holes                                          |
-| BLN-007  | Boolean undo/redo         |      ⬜ | Restore exact source hierarchy and ordering                          |
-| BLN-008  | Failure safety            |      ⬜ | Failed operations make no document changes                           |
-| BLN-009  | Boolean UI                |      ⬜ | Visible toolbar/inspector actions                                    |
-| BLN-010  | Geometry fixtures         |      ⬜ | Curves, holes, nested transforms, empty results                      |
-| PERF-020 | Geometry performance      |      ⬜ | Record operation timings and move heavy work off UI thread           |
+| PTH-000  | Canonical path model      |      ✅ | `geometry/pathTypes.ts` — normalized M/L/C/Z; ops run on this form   |
+| PTH-001  | Full SVG path parser      |      ✅ | `pathParser.ts` — all commands, rel/abs, shorthand, arc→cubic        |
+| PTH-002  | Path serializer           |      ✅ | `pathData.serializePath` regenerates `d` from canonical geometry     |
+| PTH-003  | Complex path rendering    |     🟡 | Path nodes render fill/stroke/fillRule; curves/subpaths verified in tests |
+| PTH-004  | Accurate path bounds      |      ✅ | `geometryBounds` — exact cubic extrema (tested)                      |
+| PTH-005  | Path hit testing          |     🟡 | Native SVG hit-testing; hole/transformed-group cases unverified      |
+| CVP-001  | Rectangle to path         |      ✅ | `convertToPathCommand`, one undoable replacement                     |
+| CVP-002  | Rounded rectangle to path |      ✅ | Curved corners via cubic arcs (tested)                               |
+| CVP-003  | Ellipse to path           |      ✅ | 4-cubic ellipse, correct bounds (tested)                             |
+| CVP-004  | Polygon/star to path      |      ✅ | Exact vertices preserved                                             |
+| CVP-005  | Line/stroke handling      |     🟡 | Open lines rejected before booleans; stroke-outline not yet          |
+| BLN-000  | Geometry-engine adapter   |      ✅ | Async `BooleanGeometryEngine`; polygon-clipping isolated in adapter  |
+| BLN-001  | Union                     |      ✅ | Destructive result PathNode (AT-BLN-001)                             |
+| BLN-002  | Subtract front            |      ✅ | Front-most operand subtracts (AT-BLN-002)                            |
+| BLN-003  | Intersect                 |      ✅ | Preserves sources on empty result (AT-BLN-003/008)                   |
+| BLN-004  | Exclude/XOR               |      ✅ | evenodd result with holes (AT-BLN-004)                               |
+| BLN-005  | Transform flattening      |      ✅ | World-space combine, result→parent-local (AT-BLN-005)               |
+| BLN-006  | Compound paths            |      ✅ | Multiple contours + holes via even-odd nesting                       |
+| BLN-007  | Boolean undo/redo         |      ✅ | One transaction restores exact hierarchy (tested)                    |
+| BLN-008  | Failure safety            |      ✅ | Empty/engine-failure leaves the document untouched                   |
+| BLN-009  | Boolean UI                |      ✅ | Toolbar U/S/I/X + Convert-to-Path + transient warnings               |
+| BLN-010  | Geometry fixtures         |      ✅ | `tests/unit/{pathGeometry,booleanOps}.test.ts` (26 tests)            |
+| PERF-020 | Geometry performance      |      ⬜ | Sync execution; worker migration + timings still pending             |
 
 ## Revised immediate implementation order
 

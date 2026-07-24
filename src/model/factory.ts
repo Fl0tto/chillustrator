@@ -11,6 +11,7 @@ import type {
   Matrix2D,
   NodeStyle,
   PaintReference,
+  PathNode,
   PolygonNode,
   RectNode,
   TextNode,
@@ -132,6 +133,14 @@ export function createText(
     fontStyle: "normal",
     letterSpacing: 0,
     textAnchor: "start",
+  };
+}
+
+export function createPath(init: BaseInit & { d: string }): PathNode {
+  return {
+    ...base(init, "Path"),
+    type: "path",
+    d: init.d,
   };
 }
 
