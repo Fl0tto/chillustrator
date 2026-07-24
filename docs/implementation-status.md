@@ -38,18 +38,32 @@ Updated continuously through the Phase 0 build. Legend: ✅ done · 🟡 partial
 | LYR-001 | Layers panel | 🟡 | Tree/select/rename?/visibility/lock; rename+DnD pending |
 | ALN-001 | Alignment | ✅ | 6 edges relative to selection bounds |
 | HST-010 | Undo/redo | ✅ | Toolbar + shortcuts, one-entry-per-gesture |
-| IMP-001 | Safe import | ⬜ | Agent F |
-| EXP-001 | SVG export | ⬜ | Agent F |
-| SRC-001 | Source viewer | ⬜ | Agent F/E |
-| SAV-001 | Local persistence | ⬜ | Agent F |
-| TST-001 | Tests | 🟡 | Core smoke tests; full suite Agent G |
+| IMP-001 | Safe import | ✅ | Sanitize→parse→model; toolbar file picker; one undoable transaction |
+| EXP-001 | SVG export | ✅ | Clean serializer (precision, pretty, referenced-defs only); download + copy |
+| SRC-001 | Source viewer | ✅ | Read-only drawer, live refresh, copy button |
+| SAV-001 | Local persistence | ✅ | Debounced localStorage autosave + restore-on-load |
+| TST-001 | Tests | 🟡 | Core smoke + SVG-pipeline suite (14 tests); Playwright e2e pending Agent G |
 
 ## Known defects / limitations
 
 - Rotation not yet editable numerically in the inspector.
 - Layers panel lacks rename + drag-reorder (commands exist).
 - Text editing is inspector-only (no in-canvas caret).
-- Import/export/persistence not yet implemented (Agent F).
+- Source viewer is read-only (editable source deferred to Phase 3 / SRC-010).
+- Autosave persists the document only; undo history resets on reload (by design).
+
+## Wave 2 (SVG pipeline) — added
+
+- `importExport/serializeSvg.ts` — model→clean SVG (precision, pretty/minified,
+  hidden-node omission, referenced-gradient defs only, XML-escaped).
+- `importExport/download.ts` — download + clipboard helpers.
+- `importExport/persistence.ts` — debounced autosave + restore + clear.
+- `importSvg.buildDocumentFromImport` — assemble a document from an import result.
+- Wired into the toolbar (Import/Export/Source) + `SourcePanel`; autosave/restore
+  in `App`.
+- Fixed pre-existing typecheck/lint issues in the wave-2 interaction + import files.
+- Tests: `tests/unit/svgPipeline.test.ts` (sanitation, export, round-trip,
+  persistence).
 
 ## Test results (Wave 1)
 

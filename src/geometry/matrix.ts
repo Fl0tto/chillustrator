@@ -10,6 +10,8 @@
  */
 import type { Matrix2D } from "@/model/types";
 
+export type { Matrix2D };
+
 export interface Point {
   x: number;
   y: number;

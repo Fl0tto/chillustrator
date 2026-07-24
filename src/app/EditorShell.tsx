@@ -6,6 +6,7 @@
  * loop works and is testable. Wave-2 (Agent E) replaces the panel internals with
  * richer components under src/components/**, and Agent F wires import/export.
  */
+import { useRef, useState } from "react";
 import {
   MousePointer2,
   Square,
@@ -20,6 +21,9 @@ import {
   Ungroup,
   Sun,
   Moon,
+  Upload,
+  Download,
+  Code2,
 } from "lucide-react";
 import { CanvasStage } from "@/renderer/CanvasStage";
 import { useEditorStore, type ToolId } from "@/store/editorStore";
@@ -32,8 +36,12 @@ import {
 } from "@/store/selectors";
 import { deleteNodesCommand } from "@/commands/nodeCommands";
 import { groupNodesCommand, ungroupCommand, alignCommand, type AlignEdge } from "@/commands/layerCommands";
+import { importSvg, buildDocumentFromImport } from "@/importExport/importSvg";
+import { serializeSvg } from "@/importExport/serializeSvg";
+import { downloadText, svgFilename } from "@/importExport/download";
 import { InspectorPanel } from "./panels/InspectorPanel";
 import { LayersPanel } from "./panels/LayersPanel";
+import { SourcePanel } from "./panels/SourcePanel";
 
 const TOOLS: { id: ToolId; icon: React.ReactNode; title: string; key: string }[] = [
   { id: "select", icon: <MousePointer2 size={18} />, title: "Select", key: "V" },
@@ -53,7 +61,7 @@ const ALIGN_BUTTONS: { edge: AlignEdge; label: string; title: string }[] = [
   { edge: "bottom", label: "B", title: "Align bottom" },
 ];
 
-function Toolbar() {
+function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; sourceOpen: boolean }) {
   const { canUndo, canRedo } = useHistoryFlags();
   const selection = useSelection();
   const prefs = usePreferences();
@@ -63,6 +71,28 @@ function Toolbar() {
   const setSelection = useEditorStore((s) => s.setSelection);
   const clearSelection = useEditorStore((s) => s.clearSelection);
   const setPreferences = useEditorStore((s) => s.setPreferences);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const onImportFile = async (file: File) => {
+    const text = await file.text();
+    const result = importSvg(text);
+    if (!result.ok) {
+      window.alert(`Import failed: ${result.reason}`);
+      return;
+    }
+    const doc = buildDocumentFromImport(result, file.name.replace(/\.svg$/i, ""));
+    // One undoable transaction (HST-005).
+    useEditorStore.getState().loadDocument(doc, { record: true, label: "Import SVG" });
+    if (result.warnings.length > 0) {
+      console.warn("[import] warnings:", result.warnings);
+    }
+  };
+
+  const onExport = () => {
+    const doc = useEditorStore.getState().document;
+    const svg = serializeSvg(doc, { precision: prefs.exportPrecision, pretty: true });
+    downloadText(svg, svgFilename(doc.name));
+  };
 
   const hasSel = selection.length > 0;
   const canGroup = selection.length >= 2;
@@ -136,7 +166,34 @@ function Toolbar() {
         ))}
       </div>
 
-      <div className="spacer" />
+      <div className="spacer" style={{ flex: 1 }} />
+
+      <div className="group">
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".svg,image/svg+xml"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void onImportFile(file);
+            e.target.value = ""; // allow re-importing the same file
+          }}
+        />
+        <button className="btn" title="Import SVG" onClick={() => fileInput.current?.click()}>
+          <Upload size={16} />
+        </button>
+        <button className="btn" title="Export SVG" onClick={onExport}>
+          <Download size={16} />
+        </button>
+        <button
+          className={`btn ${sourceOpen ? "active" : ""}`}
+          title="View SVG source"
+          onClick={onToggleSource}
+        >
+          <Code2 size={16} />
+        </button>
+      </div>
 
       <button
         className="btn"
@@ -186,9 +243,10 @@ function StatusBar() {
 }
 
 export function EditorShell() {
+  const [showSource, setShowSource] = useState(false);
   return (
     <div className="chill-shell">
-      <Toolbar />
+      <Toolbar onToggleSource={() => setShowSource((v) => !v)} sourceOpen={showSource} />
       <ToolRail />
       <div className="chill-canvas">
         <CanvasStage />
@@ -196,6 +254,7 @@ export function EditorShell() {
       <div className="chill-panels">
         <InspectorPanel />
         <LayersPanel />
+        {showSource && <SourcePanel onClose={() => setShowSource(false)} />}
       </div>
       <StatusBar />
     </div>

@@ -1,14 +1,15 @@
 /**
  * useCanvasController — wires pointer / wheel / keyboard interaction to the store.
  *
- * OWNED BY: Agent D (interactions). Seeded by the orchestrator with a working
- * baseline (select, move, marquee, create, resize, rotate, zoom, pan, keyboard)
- * so the app functions end-to-end. Agent D refines: aspect-ratio & angle
- * snapping polish, per-tool options, snapping to guides, pen/text editing, etc.
+ * OWNED BY: Agent D (interactions). Composes the pure controllers in this folder
+ * (transformController, marqueeController, snapping, tools/shapeBuilder) into the
+ * live gesture state machine mounted by CanvasStage.
  *
- * PERFORMANCE CONTRACT (PERF-001/002): high-frequency pointer moves update the
- * DOM directly (transient) and the store only for lightweight overlay state.
- * Exactly one command is committed on pointer release → one undo entry (HST-002).
+ * PERFORMANCE CONTRACT (PERF-001/002, HST-002): high-frequency pointer moves
+ * update the DOM directly (transient `setAttribute("transform", …)`) plus only
+ * lightweight overlay state in the store (interaction.marquee / previewNode /
+ * isGesture). EXACTLY ONE command is committed via store.apply(...) on pointer
+ * release → one undo entry. The full store is never written per pointer move.
  */
 import { useEffect, type RefObject } from "react";
 import { useEditorStore } from "@/store/editorStore";
@@ -17,24 +18,34 @@ import {
   identityMatrix,
   invert,
   multiply,
-  rotate,
-  scale,
   translate,
   toSvgTransform,
   type Point,
 } from "@/geometry/matrix";
 import { parentWorldMatrix, selectionWorldBounds } from "@/geometry/nodeGeometry";
-import { isEmptyBounds, boundsContainBounds, boundsCenter, type Bounds } from "@/geometry/bounds";
-import { createEllipse, createLine, createPolygon, createRect, createText, regularPolygonPoints } from "@/model/factory";
-import { addNodeCommand, deleteNodesCommand } from "@/commands/nodeCommands";
+import { isEmptyBounds, boundsCenter, type Bounds } from "@/geometry/bounds";
+import { createText } from "@/model/factory";
+import { addNodeCommand, deleteNodesCommand, duplicateNodesCommand } from "@/commands/nodeCommands";
+import { groupNodesCommand, ungroupCommand } from "@/commands/layerCommands";
+import { transaction } from "@/commands/command";
 import { applyWorldTransformCommand } from "@/commands/transformCommands";
 import { isEffectivelyLocked } from "@/model/tree";
-import { OPPOSITE_HANDLE, type HandleId } from "./handles";
-import type { Matrix2D, SvgNode } from "@/model/types";
+import type { HandleId } from "./handles";
+import {
+  angleOf,
+  computeResizeWorld,
+  resizeAnchor,
+  rotateWorld,
+  rotationDegrees,
+  snapDegrees,
+} from "./transformController";
+import { marqueeBounds, marqueeHits } from "./marqueeController";
+import { buildShape } from "./tools/shapeBuilder";
+import { collectSnapCandidates, snapMoveDelta, type SnapCandidates } from "./snapping";
+import type { Matrix2D } from "@/model/types";
 
 const MIN_DRAG = 3; // px before a click becomes a drag
-const MIN_SIZE = 2; // min shape/resize size in root units
-const POLYGON_SIDES = 6;
+const SNAP_PX = 6; // move-snap threshold in screen pixels
 
 type GestureKind = "idle" | "move" | "marquee" | "create" | "resize" | "rotate" | "pan";
 
@@ -53,6 +64,9 @@ interface Gesture {
   pointerId: number;
   // move/resize/rotate
   snapshots: NodeSnapshot[];
+  // move (snapping)
+  selBounds?: Bounds;
+  snapCandidates?: SnapCandidates;
   // resize
   handle?: HandleId;
   anchor?: Point; // fixed point (root)
@@ -105,16 +119,56 @@ export function useCanvasController(
         .filter((s): s is NodeSnapshot => s !== null);
     };
 
+    const elementFor = (id: string): SVGGraphicsElement | null => {
+      const root = svgRef.current;
+      if (!root) return null;
+      return root.querySelector<SVGGraphicsElement>(`[data-node-id="${CSS.escape(id)}"]`);
+    };
+
     /** Apply a world-space transform D to snapshotted elements directly (transient). */
     const applyTransient = (world: Matrix2D) => {
-      const root = svgRef.current;
-      if (!root) return;
       for (const snap of gesture.snapshots) {
         const next = multiply(multiply(multiply(snap.parentInv, world), snap.parent), snap.local);
-        const el = root.querySelector<SVGGraphicsElement>(`[data-node-id="${CSS.escape(snap.id)}"]`);
+        const el = elementFor(snap.id);
         if (el) el.setAttribute("transform", toSvgTransform(next));
       }
     };
+
+    /** Revert transient DOM writes back to the model's local transforms (cancel). */
+    const restoreTransient = () => {
+      for (const snap of gesture.snapshots) {
+        const el = elementFor(snap.id);
+        if (el) el.setAttribute("transform", toSvgTransform(snap.local));
+      }
+    };
+
+    const beginGesture = () => {
+      if (!store.getState().interaction.isGesture) store.getState().setInteraction({ isGesture: true });
+    };
+
+    const endGesture = () => {
+      const patch: Record<string, unknown> = {};
+      const it = store.getState().interaction;
+      if (it.isGesture) patch.isGesture = false;
+      if (it.marquee) patch.marquee = null;
+      if (it.previewNode) patch.previewNode = null;
+      if (Object.keys(patch).length) store.getState().setInteraction(patch);
+      gesture = idle();
+    };
+
+    /** Cancel an in-progress gesture, restoring any transient DOM (Escape). */
+    const cancelGesture = () => {
+      if (gesture.kind === "move" || gesture.kind === "resize" || gesture.kind === "rotate") {
+        restoreTransient();
+      }
+      if (gesture.pointerId >= 0 && host.hasPointerCapture(gesture.pointerId)) {
+        host.releasePointerCapture(gesture.pointerId);
+      }
+      endGesture();
+    };
+
+    /** Root-space snap threshold for the move gesture. */
+    const snapThreshold = () => SNAP_PX / store.getState().viewport.zoom;
 
     const selectableAt = (target: EventTarget | null): string | null => {
       if (!(target instanceof Element)) return null;
@@ -124,8 +178,7 @@ export function useCanvasController(
       if (!id) return null;
       const doc = store.getState().document;
       if (!doc.nodes[id] || isEffectivelyLocked(doc, id)) return null;
-      // Resolve to the topmost selectable ancestor that is a direct/root child
-      // unless already inside a selected group (simple model: select top-most).
+      // Resolve to the top-most ancestor (select the whole group, not a child).
       let current = doc.nodes[id];
       while (current.parentId && doc.nodes[current.parentId]) {
         current = doc.nodes[current.parentId]!;
@@ -145,6 +198,7 @@ export function useCanvasController(
       if (e.button === 1 || spaceDown) {
         gesture.kind = "pan";
         gesture.startPan = { x: state.viewport.panX, y: state.viewport.panY };
+        beginGesture();
         return;
       }
 
@@ -158,17 +212,15 @@ export function useCanvasController(
           if (handleEl.hasAttribute("data-rotate")) {
             gesture.kind = "rotate";
             gesture.center = boundsCenter(b);
-            gesture.startAngle = Math.atan2(root.y - gesture.center.y, root.x - gesture.center.x);
+            gesture.startAngle = angleOf(gesture.center, root);
           } else {
             const handle = handleEl.getAttribute("data-handle") as HandleId;
             gesture.kind = "resize";
             gesture.handle = handle;
             gesture.startBounds = b;
-            const opp = OPPOSITE_HANDLE[handle];
-            const fx = opp.includes("w") ? b.minX : opp.includes("e") ? b.maxX : (b.minX + b.maxX) / 2;
-            const fy = opp.includes("n") ? b.minY : opp.includes("s") ? b.maxY : (b.minY + b.maxY) / 2;
-            gesture.anchor = { x: fx, y: fy };
+            gesture.anchor = resizeAnchor(b, handle);
           }
+          beginGesture();
           return;
         }
       }
@@ -186,6 +238,7 @@ export function useCanvasController(
         }
         gesture.kind = "create";
         gesture.createStart = root;
+        beginGesture();
         return;
       }
 
@@ -201,19 +254,33 @@ export function useCanvasController(
         const sel = store.getState().selection;
         gesture.kind = "move";
         gesture.snapshots = snapshot(sel);
+        gesture.selBounds = selectionWorldBounds(store.getState().document, sel);
+        if (store.getState().preferences.snapEnabled) {
+          gesture.snapCandidates = collectSnapCandidates(store.getState().document, sel);
+        }
+        beginGesture();
       } else {
         // Empty space → marquee (or clear on click).
         if (!e.shiftKey) store.getState().clearSelection();
         gesture.kind = "marquee";
+        beginGesture();
       }
+    };
+
+    /** Snapped (dx, dy) for the active move gesture. */
+    const moveDelta = (root: Point): { dx: number; dy: number } => {
+      const dx = root.x - gesture.startRoot.x;
+      const dy = root.y - gesture.startRoot.y;
+      if (gesture.snapCandidates && gesture.selBounds && store.getState().preferences.snapEnabled) {
+        return snapMoveDelta(gesture.selBounds, dx, dy, gesture.snapCandidates, snapThreshold());
+      }
+      return { dx, dy };
     };
 
     // ---- pointer move -------------------------------------------------------
     const onPointerMove = (e: PointerEvent) => {
       if (gesture.pointerId !== e.pointerId || gesture.kind === "idle") return;
       const root = toRoot(e.clientX, e.clientY);
-      const dxRoot = root.x - gesture.startRoot.x;
-      const dyRoot = root.y - gesture.startRoot.y;
       const dxClient = e.clientX - gesture.startClient.x;
       const dyClient = e.clientY - gesture.startClient.y;
       if (!gesture.moved && Math.hypot(dxClient, dyClient) < MIN_DRAG) return;
@@ -229,7 +296,8 @@ export function useCanvasController(
           break;
         }
         case "move": {
-          applyTransient(translate(dxRoot, dyRoot));
+          const { dx, dy } = moveDelta(root);
+          applyTransient(translate(dx, dy));
           break;
         }
         case "marquee": {
@@ -237,24 +305,22 @@ export function useCanvasController(
             marquee: {
               x: Math.min(gesture.startRoot.x, root.x),
               y: Math.min(gesture.startRoot.y, root.y),
-              width: Math.abs(dxRoot),
-              height: Math.abs(dyRoot),
+              width: Math.abs(root.x - gesture.startRoot.x),
+              height: Math.abs(root.y - gesture.startRoot.y),
             },
           });
           break;
         }
         case "resize": {
           if (!gesture.anchor || !gesture.startBounds || !gesture.handle) break;
-          const world = resizeWorld(gesture.startBounds, gesture.anchor, gesture.handle, root, e.shiftKey);
-          applyTransient(world);
+          applyTransient(computeResizeWorld(gesture.startBounds, gesture.anchor, gesture.handle, root, e.shiftKey));
           break;
         }
         case "rotate": {
           if (!gesture.center || gesture.startAngle === undefined) break;
-          let ang = Math.atan2(root.y - gesture.center.y, root.x - gesture.center.x) - gesture.startAngle;
-          let deg = (ang * 180) / Math.PI;
-          if (e.shiftKey) deg = Math.round(deg / 15) * 15;
-          applyTransient(rotate(deg, gesture.center.x, gesture.center.y));
+          let deg = rotationDegrees(gesture.center, gesture.startAngle, root);
+          if (e.shiftKey) deg = snapDegrees(deg, 15);
+          applyTransient(rotateWorld(gesture.center, deg));
           break;
         }
         case "create": {
@@ -276,16 +342,17 @@ export function useCanvasController(
       switch (gesture.kind) {
         case "move": {
           if (gesture.moved) {
-            const dx = root.x - gesture.startRoot.x;
-            const dy = root.y - gesture.startRoot.y;
-            const ids = gesture.snapshots.map((sn) => sn.id);
-            s.apply(applyWorldTransformCommand(ids, translate(dx, dy), "Move"));
+            const { dx, dy } = moveDelta(root);
+            if (dx !== 0 || dy !== 0) {
+              const ids = gesture.snapshots.map((sn) => sn.id);
+              s.apply(applyWorldTransformCommand(ids, translate(dx, dy), "Move"));
+            }
           }
           break;
         }
         case "resize": {
           if (gesture.moved && gesture.anchor && gesture.startBounds && gesture.handle) {
-            const world = resizeWorld(gesture.startBounds, gesture.anchor, gesture.handle, root, e.shiftKey);
+            const world = computeResizeWorld(gesture.startBounds, gesture.anchor, gesture.handle, root, e.shiftKey);
             const ids = gesture.snapshots.map((sn) => sn.id);
             s.apply(applyWorldTransformCommand(ids, world, "Resize"));
           }
@@ -293,28 +360,21 @@ export function useCanvasController(
         }
         case "rotate": {
           if (gesture.moved && gesture.center && gesture.startAngle !== undefined) {
-            let ang = Math.atan2(root.y - gesture.center.y, root.x - gesture.center.x) - gesture.startAngle;
-            let deg = (ang * 180) / Math.PI;
-            if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+            let deg = rotationDegrees(gesture.center, gesture.startAngle, root);
+            if (e.shiftKey) deg = snapDegrees(deg, 15);
             const ids = gesture.snapshots.map((sn) => sn.id);
-            s.apply(applyWorldTransformCommand(ids, rotate(deg, gesture.center.x, gesture.center.y), "Rotate"));
+            s.apply(applyWorldTransformCommand(ids, rotateWorld(gesture.center, deg), "Rotate"));
           }
           break;
         }
         case "marquee": {
-          if (gesture.moved) {
+          if (gesture.moved && s.interaction.marquee) {
             const m = s.interaction.marquee;
-            if (m) {
-              const box: Bounds = { minX: m.x, minY: m.y, maxX: m.x + m.width, maxY: m.y + m.height };
-              const hits = s.document.rootNodeIds.filter((id) => {
-                const nb = selectionWorldBounds(s.document, [id]);
-                return !isEmptyBounds(nb) && boundsContainBounds(box, nb);
-              });
-              if (e.shiftKey) s.addToSelection(hits);
-              else s.setSelection(hits);
-            }
+            const box = marqueeBounds(m.x, m.y, m.x + m.width, m.y + m.height);
+            const hits = marqueeHits(s.document, box);
+            if (e.shiftKey) s.addToSelection(hits);
+            else s.setSelection(hits);
           }
-          s.setInteraction({ marquee: null });
           break;
         }
         case "create": {
@@ -326,11 +386,10 @@ export function useCanvasController(
               s.setTool("select");
             }
           }
-          s.setInteraction({ previewNode: null });
           break;
         }
       }
-      gesture = idle();
+      endGesture();
     };
 
     // ---- wheel zoom ---------------------------------------------------------
@@ -349,42 +408,83 @@ export function useCanvasController(
     };
 
     // ---- keyboard -----------------------------------------------------------
+    const isTypingTarget = (t: EventTarget | null): boolean => {
+      const el = t as HTMLElement | null;
+      const tag = el?.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || Boolean(el?.isContentEditable);
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement | null)?.isContentEditable) {
-        if (e.key === " ") return;
-      }
+      // Never hijack shortcuts while typing in a field.
+      if (isTypingTarget(e.target)) return;
+
       if (e.key === " ") {
         spaceDown = true;
+        e.preventDefault();
         return;
       }
       const s = store.getState();
       const mod = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
 
-      if (mod && e.key.toLowerCase() === "z") {
+      // Undo / redo (HST-010).
+      if (mod && key === "z") {
         e.preventDefault();
         if (e.shiftKey) s.redo();
         else s.undo();
         return;
       }
-      if (mod && e.key.toLowerCase() === "y") {
+      if (mod && key === "y") {
         e.preventDefault();
         s.redo();
         return;
       }
-      if (e.key === "Escape") {
-        s.setInteraction({ previewNode: null, marquee: null });
-        s.setTool("select");
-        gesture = idle();
+      // Duplicate.
+      if (mod && key === "d") {
+        e.preventDefault();
+        if (s.selection.length > 0) {
+          let newIds: string[] = [];
+          s.apply(duplicateNodesCommand(s.selection, { x: 16, y: 16 }, (ids) => (newIds = ids)));
+          if (newIds.length) s.setSelection(newIds);
+        }
         return;
       }
+      // Group / ungroup.
+      if (mod && key === "g") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          const groups = s.selection.filter((id) => s.document.nodes[id]?.type === "group");
+          if (groups.length) {
+            const childOut: string[] = [];
+            const cmds = groups.map((gid) =>
+              ungroupCommand(gid, (ids) => childOut.push(...ids)),
+            );
+            s.apply(cmds.length === 1 ? cmds[0] : transaction("Ungroup", cmds));
+            if (childOut.length) s.setSelection(childOut);
+          }
+        } else if (s.selection.length > 0) {
+          let groupId = "";
+          s.apply(groupNodesCommand(s.selection, (id) => (groupId = id)));
+          if (groupId) s.setSelection([groupId]);
+        }
+        return;
+      }
+      // Cancel / back-to-select.
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (gesture.kind !== "idle") cancelGesture();
+        else s.setInteraction({ previewNode: null, marquee: null });
+        s.setTool("select");
+        return;
+      }
+      // Delete.
       if ((e.key === "Delete" || e.key === "Backspace") && s.selection.length > 0) {
         e.preventDefault();
         s.apply(deleteNodesCommand(s.selection));
         s.clearSelection();
         return;
       }
-      // Arrow-key nudge.
+      // Arrow-key nudge (Shift ×10).
       const nudge: Record<string, [number, number]> = {
         ArrowLeft: [-1, 0],
         ArrowRight: [1, 0],
@@ -398,8 +498,8 @@ export function useCanvasController(
         s.apply(applyWorldTransformCommand(s.selection, translate(nx * step, ny * step), "Nudge"));
         return;
       }
-      // Tool shortcuts.
-      if (!mod) {
+      // Tool shortcuts (no modifier).
+      if (!mod && !e.altKey) {
         const tools: Record<string, () => void> = {
           v: () => s.setTool("select"),
           r: () => s.setTool("rect"),
@@ -408,7 +508,7 @@ export function useCanvasController(
           p: () => s.setTool("polygon"),
           t: () => s.setTool("text"),
         };
-        const fn = tools[e.key.toLowerCase()];
+        const fn = tools[key];
         if (fn) fn();
       }
     };
@@ -432,94 +532,4 @@ export function useCanvasController(
       window.removeEventListener("keyup", onKeyUp);
     };
   }, [hostRef, svgRef]);
-}
-
-// --------------------------------------------------------------------------
-// Helpers
-// --------------------------------------------------------------------------
-
-function resizeWorld(
-  startBounds: Bounds,
-  anchor: Point,
-  handle: HandleId,
-  pointer: Point,
-  keepAspect: boolean,
-): Matrix2D {
-  const startW = startBounds.maxX - startBounds.minX || 1;
-  const startH = startBounds.maxY - startBounds.minY || 1;
-  const affectsX = handle.includes("e") || handle.includes("w");
-  const affectsY = handle.includes("n") || handle.includes("s");
-
-  let sx = 1;
-  let sy = 1;
-  if (affectsX) {
-    const denom = (handle.includes("e") ? startBounds.maxX : startBounds.minX) - anchor.x;
-    sx = denom !== 0 ? (pointer.x - anchor.x) / denom : 1;
-  }
-  if (affectsY) {
-    const denom = (handle.includes("s") ? startBounds.maxY : startBounds.minY) - anchor.y;
-    sy = denom !== 0 ? (pointer.y - anchor.y) / denom : 1;
-  }
-  if (keepAspect && affectsX && affectsY) {
-    const s = Math.max(Math.abs(sx), Math.abs(sy));
-    sx = Math.sign(sx || 1) * s;
-    sy = Math.sign(sy || 1) * s;
-  } else if (!affectsX) {
-    sx = 1;
-  } else if (!affectsY) {
-    sy = 1;
-  }
-  // Minimum-size guard.
-  if (Math.abs(sx * startW) < MIN_SIZE) sx = (MIN_SIZE / startW) * Math.sign(sx || 1);
-  if (Math.abs(sy * startH) < MIN_SIZE) sy = (MIN_SIZE / startH) * Math.sign(sy || 1);
-
-  return multiply(multiply(translate(anchor.x, anchor.y), scale(sx, sy)), translate(-anchor.x, -anchor.y));
-}
-
-function buildShape(
-  tool: string,
-  start: Point,
-  end: Point,
-  constrain: boolean,
-): SvgNode | null {
-  const x = Math.min(start.x, end.x);
-  const y = Math.min(start.y, end.y);
-  let w = Math.abs(end.x - start.x);
-  let h = Math.abs(end.y - start.y);
-  if (constrain && (tool === "rect" || tool === "ellipse")) {
-    const s = Math.max(w, h);
-    w = s;
-    h = s;
-  }
-  switch (tool) {
-    case "rect":
-      return createRect({ x, y, width: Math.max(w, MIN_SIZE), height: Math.max(h, MIN_SIZE) });
-    case "ellipse":
-      return createEllipse({
-        cx: x + w / 2,
-        cy: y + h / 2,
-        rx: Math.max(w / 2, MIN_SIZE / 2),
-        ry: Math.max(h / 2, MIN_SIZE / 2),
-      });
-    case "line": {
-      let ex = end.x;
-      let ey = end.y;
-      if (constrain) {
-        const angle = Math.atan2(end.y - start.y, end.x - start.x);
-        const snapped = (Math.round(angle / (Math.PI / 4)) * Math.PI) / 4;
-        const len = Math.hypot(end.x - start.x, end.y - start.y);
-        ex = start.x + Math.cos(snapped) * len;
-        ey = start.y + Math.sin(snapped) * len;
-      }
-      return createLine({ x1: start.x, y1: start.y, x2: ex, y2: ey });
-    }
-    case "polygon": {
-      const cx = x + w / 2;
-      const cy = y + h / 2;
-      const radius = Math.max(Math.max(w, h) / 2, MIN_SIZE);
-      return createPolygon({ points: regularPolygonPoints(cx, cy, radius, POLYGON_SIDES) });
-    }
-    default:
-      return null;
-  }
 }
