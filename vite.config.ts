@@ -4,6 +4,9 @@ import { fileURLToPath, URL } from "node:url";
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Relative base so the built app works when served from a GitHub Pages
+  // project subpath (https://<user>.github.io/chillustrator/) as well as at root.
+  base: "./",
   plugins: [react()],
   resolve: {
     alias: {
