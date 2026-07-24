@@ -202,6 +202,12 @@ export function useCanvasController(
         return;
       }
 
+      // Shape Builder owns left-click while active (see useShapeBuilder).
+      if (state.tool === "build") {
+        gesture = idle();
+        return;
+      }
+
       // Resize / rotate handle?
       const targetEl = e.target as Element | null;
       const handleEl = targetEl?.closest?.("[data-handle],[data-rotate]") as Element | null;
@@ -507,6 +513,7 @@ export function useCanvasController(
           l: () => s.setTool("line"),
           p: () => s.setTool("polygon"),
           t: () => s.setTool("text"),
+          b: () => s.setTool("build"),
         };
         const fn = tools[key];
         if (fn) fn();

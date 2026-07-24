@@ -24,6 +24,7 @@ import {
   Upload,
   Download,
   Code2,
+  Combine,
 } from "lucide-react";
 import { CanvasStage } from "@/renderer/CanvasStage";
 import { useEditorStore, type ToolId } from "@/store/editorStore";
@@ -40,6 +41,7 @@ import { importSvg, buildDocumentFromImport } from "@/importExport/importSvg";
 import { serializeSvg } from "@/importExport/serializeSvg";
 import { downloadText, svgFilename } from "@/importExport/download";
 import { runBoolean, booleanEligibility } from "@/interactions/booleanOps";
+import { commitShapeBuilder } from "@/interactions/useShapeBuilder";
 import { convertToPathCommand } from "@/commands/geometryCommands";
 import { isConvertibleToPath } from "@/geometry/pathConvert";
 import type { BooleanOperation } from "@/geometry/booleanTypes";
@@ -54,6 +56,7 @@ const TOOLS: { id: ToolId; icon: React.ReactNode; title: string; key: string }[]
   { id: "line", icon: <Minus size={18} />, title: "Line", key: "L" },
   { id: "polygon", icon: <Hexagon size={18} />, title: "Polygon", key: "P" },
   { id: "text", icon: <Type size={18} />, title: "Text", key: "T" },
+  { id: "build", icon: <Combine size={18} />, title: "Shape Builder", key: "B" },
 ];
 
 const BOOLEAN_BUTTONS: { op: BooleanOperation; label: string; title: string }[] = [
@@ -310,6 +313,41 @@ function StatusBar() {
   );
 }
 
+function BuildBar() {
+  const tool = useTool();
+  const shapeBuilder = useEditorStore((s) => s.shapeBuilder);
+  const setTool = useEditorStore((s) => s.setTool);
+  if (tool !== "build") return null;
+
+  const faceCount = shapeBuilder?.faces.length ?? 0;
+  const keptCount = shapeBuilder?.kept.length ?? 0;
+  const empty = faceCount === 0;
+
+  return (
+    <div className="chill-buildbar">
+      <Combine size={15} />
+      {empty ? (
+        <span>Select 2+ overlapping shapes, then pick the Shape Builder tool.</span>
+      ) : (
+        <span>
+          Click regions to keep ({keptCount} selected), then Build. Press Enter to build, Esc to cancel.
+        </span>
+      )}
+      <span className="spacer" style={{ flex: 1 }} />
+      <button className="btn" onClick={() => setTool("select")}>
+        Cancel
+      </button>
+      <button
+        className="btn primary"
+        disabled={keptCount === 0}
+        onClick={() => commitShapeBuilder()}
+      >
+        Build path
+      </button>
+    </div>
+  );
+}
+
 export function EditorShell() {
   const [showSource, setShowSource] = useState(false);
   return (
@@ -318,6 +356,7 @@ export function EditorShell() {
       <ToolRail />
       <div className="chill-canvas">
         <CanvasStage />
+        <BuildBar />
       </div>
       <div className="chill-panels">
         <InspectorPanel />

@@ -8,8 +8,10 @@
 import { useEffect, useRef } from "react";
 import { ArtworkSvg } from "./ArtworkSvg";
 import { EditorOverlay } from "./EditorOverlay";
+import { ShapeBuilderOverlay } from "./ShapeBuilderOverlay";
 import { useCanvasController } from "@/interactions/useCanvasController";
 import { useHoverController } from "@/interactions/useHoverController";
+import { useShapeBuilder } from "@/interactions/useShapeBuilder";
 import { useEditorStore } from "@/store/editorStore";
 import { fitToRect } from "@/geometry/viewport";
 
@@ -19,6 +21,7 @@ export function CanvasStage() {
 
   useCanvasController(hostRef, svgRef);
   useHoverController(hostRef);
+  useShapeBuilder(hostRef);
 
   // Fit the artboard into view once on mount.
   useEffect(() => {
@@ -34,6 +37,7 @@ export function CanvasStage() {
     <div ref={hostRef} className="chill-canvas-host" data-canvas-host="true">
       <ArtworkSvg ref={svgRef} />
       <EditorOverlay />
+      <ShapeBuilderOverlay />
     </div>
   );
 }

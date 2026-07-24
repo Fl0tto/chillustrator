@@ -17,6 +17,7 @@
 import { create } from "zustand";
 import { applyPatches, enablePatches, produceWithPatches } from "immer";
 import type { NodeId, SvgDocumentModel, SvgNode } from "@/model/types";
+import type { Face } from "@/geometry/adapters/shapeArrangement";
 import { createEmptyDocument } from "@/model/document";
 import type { Command } from "@/commands/command";
 import {
@@ -29,7 +30,7 @@ import {
 
 enablePatches();
 
-export type ToolId = "select" | "rect" | "ellipse" | "line" | "polygon" | "text";
+export type ToolId = "select" | "rect" | "ellipse" | "line" | "polygon" | "text" | "build";
 
 export interface Viewport {
   /** Root-user-units → screen-pixels scale. */
@@ -64,6 +65,21 @@ export interface InteractionState {
   isGesture: boolean;
 }
 
+/**
+ * Transient Shape Builder session (Illustrator-style region picker). Not
+ * undoable; only the final merged path commits through the command system.
+ */
+export interface ShapeBuilderState {
+  /** Atomic faces of the arrangement (world space). */
+  faces: Face[];
+  /** Indices of faces the user has toggled "keep". */
+  kept: number[];
+  /** Face index under the pointer, or -1. */
+  hovered: number;
+  /** Source node ids the arrangement was built from (kept, per user choice). */
+  sourceIds: NodeId[];
+}
+
 export interface EditorStore {
   // --- persistent ---
   document: SvgDocumentModel;
@@ -79,6 +95,7 @@ export interface EditorStore {
 
   // --- transient ---
   interaction: InteractionState;
+  shapeBuilder: ShapeBuilderState | null;
 
   // --- persistent edits ---
   apply: (command: Command) => void;
@@ -108,6 +125,12 @@ export interface EditorStore {
   // --- transient actions ---
   setInteraction: (partial: Partial<InteractionState>) => void;
   resetInteraction: () => void;
+
+  // --- shape builder ---
+  startShapeBuilder: (session: ShapeBuilderState) => void;
+  setShapeBuilderHover: (index: number) => void;
+  toggleShapeBuilderFace: (index: number) => void;
+  endShapeBuilder: () => void;
 }
 
 const DEFAULT_VIEWPORT: Viewport = { zoom: 1, panX: 0, panY: 0 };
@@ -137,6 +160,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   viewport: { ...DEFAULT_VIEWPORT },
   preferences: { ...DEFAULT_PREFERENCES },
   interaction: { ...EMPTY_INTERACTION },
+  shapeBuilder: null,
 
   apply(command) {
     const { document, history } = get();
@@ -203,6 +227,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         }),
         selection: [],
         interaction: { ...EMPTY_INTERACTION },
+        shapeBuilder: null,
       });
     } else {
       set({
@@ -210,6 +235,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         history: emptyHistory(),
         selection: [],
         interaction: { ...EMPTY_INTERACTION },
+        shapeBuilder: null,
       });
     }
   },
@@ -222,6 +248,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       hoveredId: null,
       editingTextId: null,
       interaction: { ...EMPTY_INTERACTION },
+      shapeBuilder: null,
     });
   },
 
@@ -242,7 +269,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   setTool(tool) {
-    set({ tool, editingTextId: null });
+    // Leaving the build tool discards any in-progress region session.
+    set({ tool, editingTextId: null, shapeBuilder: tool === "build" ? get().shapeBuilder : null });
   },
   setSelection(ids) {
     set({ selection: [...new Set(ids)] });
@@ -280,6 +308,26 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
   resetInteraction() {
     set({ interaction: { ...EMPTY_INTERACTION } });
+  },
+
+  startShapeBuilder(session) {
+    set({ shapeBuilder: session });
+  },
+  setShapeBuilderHover(index) {
+    const sb = get().shapeBuilder;
+    if (!sb || sb.hovered === index) return;
+    set({ shapeBuilder: { ...sb, hovered: index } });
+  },
+  toggleShapeBuilderFace(index) {
+    const sb = get().shapeBuilder;
+    if (!sb || index < 0) return;
+    const kept = sb.kept.includes(index)
+      ? sb.kept.filter((i) => i !== index)
+      : [...sb.kept, index];
+    set({ shapeBuilder: { ...sb, kept } });
+  },
+  endShapeBuilder() {
+    set({ shapeBuilder: null });
   },
 }));
 

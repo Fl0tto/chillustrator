@@ -67,13 +67,15 @@
   cursor: default;
 }
 .chill-artwork,
-.chill-overlay {
+.chill-overlay,
+.chill-sb-overlay {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
 }
-.chill-overlay {
+.chill-overlay,
+.chill-sb-overlay {
   pointer-events: none;
 }
 .chill-artwork {
@@ -276,4 +278,24 @@
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   white-space: nowrap;
+}
+
+/* Shape Builder hint / confirm bar */
+.chill-buildbar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(680px, calc(100% - 24px));
+  padding: 6px 8px 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+  z-index: 20;
 }

@@ -110,7 +110,12 @@ function operandToMultiPolygon(geometry: PathGeometry): MultiPolygon {
   return polygons;
 }
 
-function multiPolygonToGeometry(mp: MultiPolygon): PathGeometry {
+/** World-space MultiPolygon for an operand (transform → flatten → nest holes). */
+export function toWorldMultiPolygon(operand: BooleanOperand): MultiPolygon {
+  return operandToMultiPolygon(transformGeometry(operand.geometry, operand.transform));
+}
+
+export function multiPolygonToGeometry(mp: MultiPolygon): PathGeometry {
   const segments: PathSegment[] = [];
   for (const polygon of mp) {
     for (const ring of polygon) {

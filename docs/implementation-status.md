@@ -140,6 +140,23 @@ These items must not block Phase 0.5:
 * Animation
 * Multiple artboards
 * Non-destructive booleans
-* Shape Builder
 * Gradient mesh
 * Collaboration
+
+## Shape Builder (SBL) — added on request
+
+Illustrator-style region picker. Status: ✅ functional.
+
+- `geometry/adapters/shapeArrangement.ts` — incremental planar arrangement:
+  each shape splits existing faces via the clipping engine, so cost is
+  polynomial in real arrangement complexity, not 2^N (SBL-001).
+- Interaction: enter the **Build** tool (rail icon / `B`) with 2+ overlapping
+  fillable shapes selected; hover highlights the face under the pointer
+  (SBL-002), click toggles faces to keep, Enter/Build merges them into one path,
+  Esc cancels. Source shapes are **kept** (per product decision).
+- `interactions/useShapeBuilder.ts` (controller + commit), store
+  `shapeBuilder` transient session, `renderer/ShapeBuilderOverlay.tsx`.
+- Curved inputs are polygonalised at the flatten tolerance (curve-accurate
+  regions are a later refinement).
+- Tests: `tests/unit/shapeBuilder.test.ts` (6) — 3-face split, disjoint faces,
+  many-shape scaling, hit-test, merge, keep-sources commit + undo.

@@ -48,6 +48,34 @@ function operandGeometry(node: SvgNode) {
   return nodeToGeometry(node);
 }
 
+/** True if a node contributes a fillable region (usable as an operand/face input). */
+export function isFillableShape(node: SvgNode): boolean {
+  return (
+    node.type === "rect" ||
+    node.type === "ellipse" ||
+    node.type === "polygon" ||
+    (node.type === "path" && node.d.trim() !== "")
+  );
+}
+
+/** Build world-space boolean operands for the given ids (skips non-fillable). */
+export function buildOperands(doc: SvgDocumentModel, ids: NodeId[]): BooleanOperand[] {
+  const operands: BooleanOperand[] = [];
+  for (const id of ids) {
+    const node = doc.nodes[id];
+    if (!node) continue;
+    const geometry = operandGeometry(node);
+    if (!geometry) continue;
+    operands.push({
+      id,
+      geometry,
+      fillRule: node.style.fillRule,
+      transform: worldMatrix(doc, id),
+    });
+  }
+  return operands;
+}
+
 /** Validate a selection for boolean use without mutating anything (BLN-UI). */
 export function booleanEligibility(doc: SvgDocumentModel, ids: NodeId[]): BooleanEligibility {
   const nodes = ids.map((id) => doc.nodes[id]).filter((n): n is SvgNode => Boolean(n));
@@ -92,18 +120,7 @@ export async function runBoolean(operation: BooleanOperation): Promise<BooleanRu
   const parentId: NodeId | null = eligible.parentId ?? null;
 
   // Build world-space operands (BLN-005 step 1–3).
-  const operands: BooleanOperand[] = [];
-  for (const id of orderedIds) {
-    const node = doc.nodes[id]!;
-    const geometry = operandGeometry(node);
-    if (!geometry) continue;
-    operands.push({
-      id,
-      geometry,
-      fillRule: node.style.fillRule,
-      transform: worldMatrix(doc, id),
-    });
-  }
+  const operands = buildOperands(doc, orderedIds);
   if (operands.length < 2) {
     return { ok: false, warning: "Selection did not contain two fillable shapes." };
   }
