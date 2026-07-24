@@ -1,0 +1,230 @@
+/* Editor shell layout */
+.chill-shell {
+  display: grid;
+  grid-template-rows: var(--toolbar-h) 1fr var(--statusbar-h);
+  grid-template-columns: var(--rail-w) 1fr var(--panel-w);
+  grid-template-areas:
+    "toolbar toolbar toolbar"
+    "rail    canvas  panels"
+    "status  status  status";
+  height: 100vh;
+  width: 100vw;
+}
+
+.chill-toolbar {
+  grid-area: toolbar;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.chill-toolbar .brand {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-right: 12px;
+  color: var(--text);
+}
+.chill-toolbar .spacer {
+  flex: 1;
+}
+.chill-toolbar .group {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding-right: 8px;
+  margin-right: 4px;
+  border-right: 1px solid var(--border);
+}
+.chill-toolbar .group:last-child {
+  border-right: none;
+}
+
+.chill-rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+}
+
+.chill-canvas {
+  grid-area: canvas;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+
+.chill-canvas-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: default;
+}
+.chill-artwork,
+.chill-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.chill-overlay {
+  pointer-events: none;
+}
+.chill-artwork {
+  overflow: visible;
+}
+
+.chill-panels {
+  grid-area: panels;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.chill-status {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+}
+.btn:hover {
+  background: var(--bg-elevated);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.btn.active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+}
+.btn.tool {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+}
+.btn.tool.active {
+  background: var(--accent);
+  color: #fff;
+}
+.btn.primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn.primary:hover {
+  background: var(--accent-hover);
+}
+
+/* Panel sections */
+.panel-section {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+}
+.panel-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin: 0 0 8px;
+}
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.field-row label {
+  width: 54px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  flex-shrink: 0;
+  padding: 0;
+}
+
+/* Layers */
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  user-select: none;
+}
+.layer-row:hover {
+  background: var(--bg-elevated);
+}
+.layer-row.selected {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.layer-row .name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.layer-row .icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  display: inline-flex;
+  padding: 2px;
+}
+.layer-row .icon-btn:hover {
+  color: var(--text);
+}
+
+.empty-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 12px;
+  text-align: center;
+}
