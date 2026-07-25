@@ -1,6 +1,8 @@
 :root {
   --accent: #4c8bf5;
   --accent-hover: #3b7ae4;
+  /* Smart-alignment guide colour (also used for corner-radius grips). */
+  --snap: #ff36b0;
 
   /* Dark (default) */
   --bg: #1e1e22;

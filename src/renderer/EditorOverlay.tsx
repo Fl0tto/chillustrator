@@ -10,7 +10,7 @@
  * component is purely presentational.
  */
 import { memo } from "react";
-import { useSelectionBounds, useViewport, useInteraction } from "@/store/selectors";
+import { useSelectionBounds, useViewport, useInteraction, useTool } from "@/store/selectors";
 import { rootToLocal } from "@/geometry/viewport";
 import type { HandleId } from "@/interactions/handles";
 
@@ -32,10 +32,13 @@ export const EditorOverlay = memo(function EditorOverlay() {
   const bounds = useSelectionBounds();
   const viewport = useViewport();
   const interaction = useInteraction();
+  const tool = useTool();
+  // The Pen / node editors draw their own anchor+handle chrome instead.
+  const showSelection = tool !== "pen" && tool !== "node";
 
   return (
     <svg className="chill-overlay" width="100%" height="100%" pointerEvents="none">
-      {bounds &&
+      {showSelection && bounds &&
         (() => {
           const tl = rootToLocal(bounds.minX, bounds.minY, viewport);
           const br = rootToLocal(bounds.maxX, bounds.maxY, viewport);

@@ -6,11 +6,23 @@
  * (spec §8: HST-001..HST-005).
  */
 import type { Patch } from "immer";
+import type { SvgDocumentModel } from "@/model/types";
 
 export interface HistoryEntry {
   label: string;
   patches: Patch[];
   inversePatches: Patch[];
+  /**
+   * When set, consecutive `applyCoalesced` calls sharing the same key collapse
+   * into this single entry (e.g. a slider drag = one undo step, spec HST-002).
+   */
+  coalesceKey?: string;
+  /**
+   * The document state captured before the coalesce run began. Re-applying the
+   * (absolute-valued) command to this base recomputes the merged patches so the
+   * single entry always spans start→latest of the run.
+   */
+  coalesceBase?: SvgDocumentModel;
 }
 
 export interface HistoryState {

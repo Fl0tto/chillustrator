@@ -9,9 +9,14 @@ import { useEffect, useRef } from "react";
 import { ArtworkSvg } from "./ArtworkSvg";
 import { EditorOverlay } from "./EditorOverlay";
 import { ShapeBuilderOverlay } from "./ShapeBuilderOverlay";
+import { GuidesOverlay } from "./GuidesOverlay";
+import { PenOverlay } from "./PenOverlay";
+import { PathEditOverlay } from "./PathEditOverlay";
 import { useCanvasController } from "@/interactions/useCanvasController";
 import { useHoverController } from "@/interactions/useHoverController";
 import { useShapeBuilder } from "@/interactions/useShapeBuilder";
+import { usePenTool } from "@/interactions/usePenTool";
+import { usePathEditor } from "@/interactions/usePathEditor";
 import { useEditorStore } from "@/store/editorStore";
 import { fitToRect } from "@/geometry/viewport";
 
@@ -22,6 +27,8 @@ export function CanvasStage() {
   useCanvasController(hostRef, svgRef);
   useHoverController(hostRef);
   useShapeBuilder(hostRef);
+  usePenTool(hostRef);
+  usePathEditor(hostRef, svgRef);
 
   // Fit the artboard into view once on mount.
   useEffect(() => {
@@ -37,6 +44,9 @@ export function CanvasStage() {
     <div ref={hostRef} className="chill-canvas-host" data-canvas-host="true">
       <ArtworkSvg ref={svgRef} />
       <EditorOverlay />
+      <GuidesOverlay />
+      <PenOverlay />
+      <PathEditOverlay />
       <ShapeBuilderOverlay />
     </div>
   );

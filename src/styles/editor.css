@@ -68,6 +68,9 @@
 }
 .chill-artwork,
 .chill-overlay,
+.chill-guides,
+.chill-pen,
+.chill-pathedit,
 .chill-sb-overlay {
   position: absolute;
   inset: 0;
@@ -75,6 +78,9 @@
   height: 100%;
 }
 .chill-overlay,
+.chill-guides,
+.chill-pen,
+.chill-pathedit,
 .chill-sb-overlay {
   pointer-events: none;
 }

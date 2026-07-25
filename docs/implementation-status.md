@@ -160,3 +160,105 @@ Illustrator-style region picker. Status: ✅ functional.
   regions are a later refinement).
 - Tests: `tests/unit/shapeBuilder.test.ts` (6) — 3-face split, disjoint faces,
   many-shape scaling, hit-test, merge, keep-sources commit + undo.
+
+## Feature Wave — Pen/Path Editing · Smart Guides · Fill Alpha
+
+Status: ✅ functional. Built on the existing canonical path model, renderer,
+overlay, command/history and interaction contracts — no parallel systems.
+
+### 1. Custom path drawing + editing (Pen / node tools)
+
+- `geometry/editablePath.ts` — pure anchor/handle layer over `PathGeometry`
+  (`fromGeometry`/`toGeometry` round-trip; `moveAnchor`, `dragHandle` with
+  smooth/symmetric continuity, `setAnchorMode`, `makeSegment{Curved,Straight}`,
+  `clampCornerRadius`, `flatAnchors`/`locateAnchor`). Corner radius is a rounded
+  fillet emitted at build time, clamped to half of each adjacent segment.
+- **Pen tool** (`interactions/usePenTool.ts`, `penPreview.ts`, rail icon / `P`):
+  click to add straight anchors, click-drag for symmetric Bézier handles, live
+  rubber-band preview (`renderer/PenOverlay.tsx`), click the first anchor to
+  close with a real `Z`, Enter/double-click finishes an open path, Escape
+  cancels with **no** history, Backspace removes the last uncommitted anchor. One
+  finished drawing = one `addNodeCommand`. Finishing hands off to the node tool.
+- **Node (direct-selection) tool** (`interactions/usePathEditor.ts`,
+  `pathEditActions.ts`, `renderer/PathEditOverlay.tsx`, rail icon / `A`): select
+  & move anchors (multi), drag handles, convert anchor mode (corner/smooth/
+  symmetric) and segment type (line/curve) from the inspector, and round a
+  selected corner via an on-canvas pink grip **or** the inspector "Corner R"
+  input. Each committed anchor/handle/mode/segment/radius edit = one entry;
+  transient DOM `setAttribute` during drags, one command on release.
+- Result is always a normal `PathNode` (`d`) — compatible with Shape Builder,
+  booleans, bounds, hit-testing, import/export, and undo/redo.
+
+### 2. Toggleable smart alignment (Smart Guides)
+
+- `interactions/snapping.ts` rewritten into a candidate engine: artboard + every
+  visible/unlocked/non-selected object's edges, center, 25%/75%, corners, and
+  path anchors; viewport-filtered; candidates cached at gesture start.
+- Screen-space thresholds (÷ zoom), Schmitt-trigger **hysteresis** (wider release
+  band) and a gentle movement-**direction** bias in ranking. Rotation snapping to
+  nearby / parallel / perpendicular angles (`snapRotation`).
+- Integrated into move, resize, rotate (`useCanvasController`) and anchor
+  placement/movement (pen + node editors). **Alt** temporarily bypasses; **Shift**
+  angle constraint takes precedence during rotation.
+- Active guides render as dotted lines + concise labels (`Center ↔ Center`,
+  `Right edge ↔ Left edge`, `25% ↔ 75%`, `Anchor ↔ Anchor`, `Parallel`, `90°`)
+  in `renderer/GuidesOverlay.tsx` — overlay only, never exported.
+- Global toolbar toggle with a visible active state (`data-testid=
+  toggle-smart-guides`), persisted via `persistence.{save,load}Preferences`.
+
+### 3. Fill alpha
+
+- Model already separates object / fill / stroke opacity; added
+  `setFillOpacityCommand` / `setStrokeOpacityCommand` (absolute → coalescable)
+  and inspector percentage + slider controls with **mixed-value** handling for
+  multi-selection. Slider drags coalesce into one undo entry via the new
+  `applyCoalesced(command, key)` store action (history `coalesceKey`/`coalesceBase`).
+- Import normalizes fill alpha from `fill-opacity`, inline styles, `rgba()`, and
+  8-digit hex (existing `svgStyle`/`color`); export emits independent
+  `fill-opacity`/`stroke-opacity`. Round-trip preserves all three alphas.
+- Non-exported checkerboard preview retained; added a toolbar toggle
+  (`data-testid=toggle-checkerboard`).
+
+### Tests
+
+- Unit: `editablePath.test.ts` (12), `snapping.test.ts` (13),
+  `transparency.test.ts` (9). Integration: `pathEdit.integration.test.ts` (7).
+  Covers open/closed drawing, straight/curved segments, anchor/handle editing,
+  corner-radius clamping, path export/reimport, edge/center/quarter/anchor/
+  parallel/perpendicular snapping, direction ranking, hysteresis, guides-disabled
+  & Alt-bypass paths, guides absent from exports, independent alpha round-trip,
+  and one-history-entry-per-gesture. All existing Shape Builder + boolean tests
+  preserved (87 unit/integration total, green).
+- E2E: `tests/e2e/featureWave.spec.ts` (2, chromium green) — full flow of smart
+  snapping, fill alpha, pen creation, path editing, export, undo and redo, using
+  a dev-only `window.__editorStore` hook for deterministic canvas coordinates.
+
+### Performance observations
+
+- Candidates collected once at gesture start and viewport-filtered; pointer
+  moves do only per-frame candidate scanning + one transient DOM write (no
+  full-scene geometry per event), matching PERF-001/002. Guides live in overlay
+  state only. Slider coalescing keeps history compact during continuous drags.
+
+### Limitations
+
+- Corner-radius grip offset is a fixed screen distance (not zoom-scaled); the
+  radius value itself is exact and clamped.
+- Node editor doesn't yet add/delete on-path anchors or split segments by
+  clicking the curve (move/convert/round only).
+- Rotation guides render as a label at the pivot (no protractor arc).
+- Path-anchor snap candidates are capped (400/scene) to bound cost on very dense
+  imported paths.
+
+### Changed / added files
+
+- Added: `geometry/editablePath.ts`, `interactions/{usePenTool,usePathEditor,
+  pathEditActions,penPreview}.ts`, `renderer/{GuidesOverlay,PenOverlay,
+  PathEditOverlay}.tsx`, `tests/unit/{editablePath,snapping,transparency}.test.ts`,
+  `tests/integration/pathEdit.integration.test.ts`, `tests/e2e/featureWave.spec.ts`.
+- Rewritten: `interactions/snapping.ts`.
+- Edited: `store/{editorStore,history,selectors}.ts`,
+  `commands/styleCommands.ts`, `interactions/useCanvasController.ts`,
+  `importExport/persistence.ts`, `renderer/{CanvasStage,EditorOverlay}.tsx`,
+  `app/EditorShell.tsx`, `app/panels/InspectorPanel.tsx`,
+  `geometry/editablePath.ts` (fillet), `styles/{tokens,editor}.css`, `main.tsx`.

@@ -18,7 +18,11 @@ import { create } from "zustand";
 import { applyPatches, enablePatches, produceWithPatches } from "immer";
 import type { NodeId, SvgDocumentModel, SvgNode } from "@/model/types";
 import type { Face } from "@/geometry/adapters/shapeArrangement";
+import type { Point } from "@/geometry/matrix";
+import type { EditablePath } from "@/geometry/editablePath";
+import type { SnapGuide } from "@/interactions/snapping";
 import { createEmptyDocument } from "@/model/document";
+import { loadPreferences, savePreferences } from "@/importExport/persistence";
 import type { Command } from "@/commands/command";
 import {
   canRedo as histCanRedo,
@@ -30,7 +34,16 @@ import {
 
 enablePatches();
 
-export type ToolId = "select" | "rect" | "ellipse" | "line" | "polygon" | "text" | "build";
+export type ToolId =
+  | "select"
+  | "rect"
+  | "ellipse"
+  | "line"
+  | "polygon"
+  | "text"
+  | "build"
+  | "pen"
+  | "node";
 
 export interface Viewport {
   /** Root-user-units → screen-pixels scale. */
@@ -63,6 +76,27 @@ export interface InteractionState {
   previewNode: SvgNode | null;
   /** True while a transient gesture (drag/resize/rotate) is in progress. */
   isGesture: boolean;
+  /** Active smart-alignment guides (root coords) for the overlay. Never exported. */
+  guides: SnapGuide[];
+}
+
+/** Live Pen-tool drawing session (transient; commits one PathNode on finish). */
+export interface PenDraftState {
+  /** Placed anchors in ROOT coordinates. */
+  anchors: Array<{ x: number; y: number; handleIn: Point | null; handleOut: Point | null }>;
+  /** Live pointer position (root), or null. */
+  cursor: Point | null;
+  /** True when the pointer is hovering the first anchor (would close the path). */
+  overStart: boolean;
+}
+
+/** Direct-selection (node) editing session for one PathNode. */
+export interface PathEditState {
+  nodeId: NodeId;
+  /** Editable representation in the node's LOCAL coordinate space. */
+  path: EditablePath;
+  /** Selected anchor flat indices. */
+  selected: number[];
 }
 
 /**
@@ -96,9 +130,17 @@ export interface EditorStore {
   // --- transient ---
   interaction: InteractionState;
   shapeBuilder: ShapeBuilderState | null;
+  penDraft: PenDraftState | null;
+  pathEdit: PathEditState | null;
 
   // --- persistent edits ---
   apply: (command: Command) => void;
+  /**
+   * Apply a command whose value is ABSOLUTE (e.g. "set opacity to X"), collapsing
+   * a run of calls sharing `coalesceKey` into one undo entry. Used by slider /
+   * live-drag inputs so the whole drag is a single history step (HST-002).
+   */
+  applyCoalesced: (command: Command, coalesceKey: string) => void;
   undo: () => void;
   redo: () => void;
   canUndo: () => boolean;
@@ -131,6 +173,10 @@ export interface EditorStore {
   setShapeBuilderHover: (index: number) => void;
   toggleShapeBuilderFace: (index: number) => void;
   endShapeBuilder: () => void;
+
+  // --- pen / path editing ---
+  setPenDraft: (draft: PenDraftState | null) => void;
+  setPathEdit: (session: PathEditState | null) => void;
 }
 
 const DEFAULT_VIEWPORT: Viewport = { zoom: 1, panX: 0, panY: 0 };
@@ -147,6 +193,7 @@ const EMPTY_INTERACTION: InteractionState = {
   marquee: null,
   previewNode: null,
   isGesture: false,
+  guides: [],
 };
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
@@ -158,9 +205,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   hoveredId: null,
   editingTextId: null,
   viewport: { ...DEFAULT_VIEWPORT },
-  preferences: { ...DEFAULT_PREFERENCES },
+  preferences: { ...DEFAULT_PREFERENCES, ...loadPreferences() },
   interaction: { ...EMPTY_INTERACTION },
   shapeBuilder: null,
+  penDraft: null,
+  pathEdit: null,
 
   apply(command) {
     const { document, history } = get();
@@ -172,6 +221,26 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       document: next,
       history: recordEntry(history, { label: command.label, patches, inversePatches }),
     });
+  },
+
+  applyCoalesced(command, coalesceKey) {
+    const { document, history } = get();
+    const last = history.past[history.past.length - 1];
+    const merging = last?.coalesceKey === coalesceKey && last.coalesceBase !== undefined;
+    const base = merging ? last!.coalesceBase! : document;
+    const [next, patches, inversePatches] = produceWithPatches(base, (draft) => {
+      command.apply(draft);
+    });
+    if (!merging && patches.length === 0) return; // no-op edit, skip history
+    const entry = {
+      label: command.label,
+      patches,
+      inversePatches,
+      coalesceKey,
+      coalesceBase: base,
+    };
+    const past = merging ? [...history.past.slice(0, -1), entry] : [...history.past, entry];
+    set({ document: next, history: { past, future: [] } });
   },
 
   undo() {
@@ -269,8 +338,14 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   setTool(tool) {
-    // Leaving the build tool discards any in-progress region session.
-    set({ tool, editingTextId: null, shapeBuilder: tool === "build" ? get().shapeBuilder : null });
+    // Leaving a modal tool discards its in-progress session.
+    set({
+      tool,
+      editingTextId: null,
+      shapeBuilder: tool === "build" ? get().shapeBuilder : null,
+      penDraft: tool === "pen" ? get().penDraft : null,
+      pathEdit: tool === "node" ? get().pathEdit : null,
+    });
   },
   setSelection(ids) {
     set({ selection: [...new Set(ids)] });
@@ -300,7 +375,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     set({ viewport: { ...get().viewport, ...partial } });
   },
   setPreferences(partial) {
-    set({ preferences: { ...get().preferences, ...partial } });
+    const preferences = { ...get().preferences, ...partial };
+    set({ preferences });
+    savePreferences(preferences);
   },
 
   setInteraction(partial) {
@@ -328,6 +405,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
   endShapeBuilder() {
     set({ shapeBuilder: null });
+  },
+
+  setPenDraft(draft) {
+    set({ penDraft: draft });
+  },
+  setPathEdit(session) {
+    set({ pathEdit: session });
   },
 }));
 

@@ -33,3 +33,40 @@ export function setStrokeCommand(ids: NodeId[], stroke: PaintReference | null): 
 export function setStrokeWidthCommand(ids: NodeId[], strokeWidth: number): Command {
   return setStyleCommand(ids, { strokeWidth: Math.max(0, strokeWidth) }, "Change stroke width");
 }
+
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, Number.isFinite(n) ? n : 1));
+}
+
+/**
+ * Set the FILL paint opacity (fill-opacity, ALP-002) independently of node and
+ * stroke opacity. No-op for nodes without a fill. Absolute value → coalescable.
+ */
+export function setFillOpacityCommand(ids: NodeId[], opacity: number): Command {
+  const o = clamp01(opacity);
+  return {
+    label: "Change fill opacity",
+    apply(draft) {
+      for (const id of ids) {
+        const node = draft.nodes[id];
+        if (node?.style.fill) node.style.fill = { ...node.style.fill, opacity: o };
+      }
+      touchDocument(draft);
+    },
+  };
+}
+
+/** Set the STROKE paint opacity (stroke-opacity, ALP-002). No-op without a stroke. */
+export function setStrokeOpacityCommand(ids: NodeId[], opacity: number): Command {
+  const o = clamp01(opacity);
+  return {
+    label: "Change stroke opacity",
+    apply(draft) {
+      for (const id of ids) {
+        const node = draft.nodes[id];
+        if (node?.style.stroke) node.style.stroke = { ...node.style.stroke, opacity: o };
+      }
+      touchDocument(draft);
+    },
+  };
+}

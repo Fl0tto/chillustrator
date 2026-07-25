@@ -56,6 +56,18 @@ export function useInteraction() {
   return useEditorStore(useShallow((s) => s.interaction));
 }
 
+export function useGuides() {
+  return useEditorStore(useShallow((s) => s.interaction.guides));
+}
+
+export function usePenDraft() {
+  return useEditorStore((s) => s.penDraft);
+}
+
+export function usePathEdit() {
+  return useEditorStore((s) => s.pathEdit);
+}
+
 export function useSelectedNodes(): SvgNode[] {
   const selection = useSelection();
   const nodes = useEditorStore((s) => s.document.nodes);

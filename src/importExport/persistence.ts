@@ -9,6 +9,7 @@ import type { SvgDocumentModel } from "@/model/types";
 import { SCHEMA_VERSION } from "@/model/types";
 
 const STORAGE_KEY = "chillustrator:document:v1";
+const PREFS_KEY = "chillustrator:preferences:v1";
 
 interface StoredEnvelope {
   schemaVersion: number;
@@ -65,6 +66,33 @@ export function clearSavedDocument(): void {
     localStorage.removeItem(STORAGE_KEY);
   } catch {
     // ignore
+  }
+}
+
+/**
+ * Persist a small, JSON-safe subset of editor preferences (e.g. the Smart Guides
+ * toggle, checkerboard). Kept separate from the document envelope so it survives
+ * document reloads. Partial by design — unknown keys are ignored on load.
+ */
+export function savePreferences(prefs: Record<string, unknown>): void {
+  if (!hasStorage()) return;
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // ignore quota / serialization failures
+  }
+}
+
+/** Load persisted preferences, or an empty object when absent/invalid. */
+export function loadPreferences(): Record<string, unknown> {
+  if (!hasStorage()) return {};
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
   }
 }
 

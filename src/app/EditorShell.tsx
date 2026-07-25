@@ -25,6 +25,10 @@ import {
   Download,
   Code2,
   Combine,
+  PenTool,
+  Spline,
+  Magnet,
+  Grid2x2,
 } from "lucide-react";
 import { CanvasStage } from "@/renderer/CanvasStage";
 import { useEditorStore, type ToolId } from "@/store/editorStore";
@@ -51,10 +55,12 @@ import { SourcePanel } from "./panels/SourcePanel";
 
 const TOOLS: { id: ToolId; icon: React.ReactNode; title: string; key: string }[] = [
   { id: "select", icon: <MousePointer2 size={18} />, title: "Select", key: "V" },
+  { id: "node", icon: <Spline size={18} />, title: "Edit path (direct-selection)", key: "A" },
+  { id: "pen", icon: <PenTool size={18} />, title: "Pen", key: "P" },
   { id: "rect", icon: <Square size={18} />, title: "Rectangle", key: "R" },
   { id: "ellipse", icon: <Circle size={18} />, title: "Ellipse", key: "E" },
   { id: "line", icon: <Minus size={18} />, title: "Line", key: "L" },
-  { id: "polygon", icon: <Hexagon size={18} />, title: "Polygon", key: "P" },
+  { id: "polygon", icon: <Hexagon size={18} />, title: "Polygon", key: "G" },
   { id: "text", icon: <Type size={18} />, title: "Text", key: "T" },
   { id: "build", icon: <Combine size={18} />, title: "Shape Builder", key: "B" },
 ];
@@ -263,6 +269,27 @@ function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; s
           onClick={onToggleSource}
         >
           <Code2 size={16} />
+        </button>
+      </div>
+
+      <div className="group">
+        <button
+          className={`btn ${prefs.snapEnabled ? "active" : ""}`}
+          title={`Smart Guides: ${prefs.snapEnabled ? "on" : "off"} (Alt bypasses during a drag)`}
+          data-testid="toggle-smart-guides"
+          aria-pressed={prefs.snapEnabled}
+          onClick={() => setPreferences({ snapEnabled: !prefs.snapEnabled })}
+        >
+          <Magnet size={16} />
+        </button>
+        <button
+          className={`btn ${prefs.showCheckerboard ? "active" : ""}`}
+          title={`Transparency checkerboard: ${prefs.showCheckerboard ? "on" : "off"}`}
+          data-testid="toggle-checkerboard"
+          aria-pressed={prefs.showCheckerboard}
+          onClick={() => setPreferences({ showCheckerboard: !prefs.showCheckerboard })}
+        >
+          <Grid2x2 size={16} />
         </button>
       </div>
 

@@ -1,13 +1,35 @@
 /**
- * InspectorPanel — wave-1 baseline properties editor for the selection.
- * Superseded by Agent E's richer inspector (src/components/inspector) in wave 2.
+ * InspectorPanel — properties editor for the selection.
+ *
+ * Transparency (ALP-005): independent Object / Fill / Stroke opacity, each with a
+ * percentage input + slider and mixed-value handling for multiple selection.
+ * Slider drags coalesce into ONE undo entry (applyCoalesced, HST-002). When the
+ * node editor is active a Path section exposes anchor mode, segment type, and
+ * corner-radius controls.
  */
-import { useSelectedNodes } from "@/store/selectors";
+import { useRef } from "react";
+import { useSelectedNodes, usePathEdit } from "@/store/selectors";
 import { useEditorStore } from "@/store/editorStore";
 import { solidPaint } from "@/model/factory";
-import { setFillCommand, setStrokeCommand, setStrokeWidthCommand } from "@/commands/styleCommands";
+import {
+  setFillCommand,
+  setStrokeCommand,
+  setStrokeWidthCommand,
+  setFillOpacityCommand,
+  setStrokeOpacityCommand,
+} from "@/commands/styleCommands";
 import { setOpacityCommand, updateNodeGeometryCommand, setNodeTransformCommand } from "@/commands/transformCommands";
+import {
+  setSelectedAnchorsMode,
+  setSelectedSegmentCurved,
+  setSelectedCornerRadius,
+} from "@/interactions/pathEditActions";
+import { locateAnchor } from "@/geometry/editablePath";
+import type { AnchorMode } from "@/geometry/editablePath";
+import type { Command } from "@/commands/command";
 import type { SvgNode, PaintReference } from "@/model/types";
+
+let dragKeySeq = 0;
 
 function NumberField({
   label,
@@ -31,6 +53,66 @@ function NumberField({
         onChange={(e) => {
           const v = parseFloat(e.target.value);
           if (!Number.isNaN(v)) onCommit(v);
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Percentage opacity control: slider (coalesced live drag) + numeric input.
+ * `value` is 0..1 or null when the selection has mixed values.
+ */
+function AlphaControl({
+  label,
+  value,
+  disabled,
+  makeCommand,
+  coalesceKey,
+}: {
+  label: string;
+  value: number | null;
+  disabled?: boolean;
+  makeCommand: (opacity: number) => Command;
+  coalesceKey: string;
+}) {
+  const applyCoalesced = useEditorStore((s) => s.applyCoalesced);
+  const apply = useEditorStore((s) => s.apply);
+  const dragKey = useRef<string | null>(null);
+  const pct = value === null ? "" : Math.round(value * 100);
+
+  return (
+    <div className="field-row">
+      <label>{label}</label>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        disabled={disabled}
+        value={value === null ? 100 : Math.round(value * 100)}
+        onPointerDown={() => {
+          dragKey.current = `${coalesceKey}:${dragKeySeq++}`;
+        }}
+        onChange={(e) => {
+          const o = Number(e.target.value) / 100;
+          const key = dragKey.current ?? `${coalesceKey}:${dragKeySeq++}`;
+          applyCoalesced(makeCommand(o), key);
+        }}
+        style={{ flex: 1 }}
+      />
+      <input
+        className="input"
+        type="number"
+        min={0}
+        max={100}
+        style={{ width: 56 }}
+        disabled={disabled}
+        placeholder={value === null ? "—" : undefined}
+        value={pct}
+        onChange={(e) => {
+          const v = parseFloat(e.target.value);
+          if (!Number.isNaN(v)) apply(makeCommand(Math.max(0, Math.min(1, v / 100))));
         }}
       />
     </div>
@@ -130,11 +212,69 @@ function TextFields({ node }: { node: Extract<SvgNode, { type: "text" }> }) {
   );
 }
 
+/** Path node-editor controls (visible while the node tool has a session). */
+function PathEditFields() {
+  const session = usePathEdit();
+  if (!session) return null;
+  const selCount = session.selected.length;
+
+  // Corner radius of the first selected anchor (for the numeric input).
+  let radius = 0;
+  if (selCount > 0) {
+    const loc = locateAnchor(session.path, session.selected[0]);
+    if (loc) radius = session.path.subpaths[loc.sub].anchors[loc.anchor].cornerRadius ?? 0;
+  }
+
+  const modeBtn = (mode: AnchorMode, text: string) => (
+    <button className="btn" disabled={selCount === 0} onClick={() => setSelectedAnchorsMode(mode)}>
+      {text}
+    </button>
+  );
+
+  return (
+    <div className="panel-section">
+      <h3 className="panel-title">Path — {selCount} anchor{selCount === 1 ? "" : "s"}</h3>
+      <div className="field-row">
+        <label>Anchor</label>
+        {modeBtn("corner", "Corner")}
+        {modeBtn("smooth", "Smooth")}
+        {modeBtn("symmetric", "Symmetric")}
+      </div>
+      <div className="field-row">
+        <label>Segment</label>
+        <button className="btn" disabled={selCount === 0} onClick={() => setSelectedSegmentCurved(false)}>
+          Line
+        </button>
+        <button className="btn" disabled={selCount === 0} onClick={() => setSelectedSegmentCurved(true)}>
+          Curve
+        </button>
+      </div>
+      <NumberField
+        label="Corner R"
+        value={radius}
+        step={1}
+        onCommit={(v) => setSelectedCornerRadius(Math.max(0, v))}
+      />
+      <div className="empty-hint">
+        Drag anchors & handles on the canvas. Use the pink grip to round a corner.
+      </div>
+    </div>
+  );
+}
+
+/** Common value across a list, or null when they differ ("Mixed"). */
+function common<T>(values: T[]): T | null {
+  if (values.length === 0) return null;
+  const first = values[0];
+  return values.every((v) => v === first) ? first : null;
+}
+
 export function InspectorPanel() {
   const nodes = useSelectedNodes();
   const apply = useEditorStore((s) => s.apply);
+  const pathEdit = usePathEdit();
 
-  if (nodes.length === 0) {
+  if (nodes.length === 0 && !pathEdit) {
     return (
       <div className="panel-section">
         <h3 className="panel-title">Inspector</h3>
@@ -146,38 +286,65 @@ export function InspectorPanel() {
   const ids = nodes.map((n) => n.id);
   const primary = nodes[0];
 
+  const objectOpacity = common(nodes.map((n) => n.opacity));
+  const withFill = nodes.filter((n) => n.style.fill);
+  const withStroke = nodes.filter((n) => n.style.stroke);
+  const fillOpacity = withFill.length ? common(withFill.map((n) => n.style.fill!.opacity)) : null;
+  const strokeOpacity = withStroke.length ? common(withStroke.map((n) => n.style.stroke!.opacity)) : null;
+
   return (
     <>
-      <div className="panel-section">
-        <h3 className="panel-title">
-          {nodes.length === 1 ? `${primary.type} · ${primary.name}` : `${nodes.length} objects`}
-        </h3>
-        {nodes.length === 1 && <GeometryFields node={primary} />}
-        <NumberField
-          label="Opacity"
-          value={primary.opacity}
-          step={0.1}
-          onCommit={(v) => apply(setOpacityCommand(ids, v))}
-        />
-      </div>
+      {primary && (
+        <div className="panel-section">
+          <h3 className="panel-title">
+            {nodes.length === 1 ? `${primary.type} · ${primary.name}` : `${nodes.length} objects`}
+          </h3>
+          {nodes.length === 1 && <GeometryFields node={primary} />}
+          <AlphaControl
+            label="Opacity"
+            value={objectOpacity}
+            makeCommand={(o) => setOpacityCommand(ids, o)}
+            coalesceKey={`opacity:${ids.join(",")}`}
+          />
+        </div>
+      )}
 
-      <div className="panel-section">
-        <h3 className="panel-title">Fill</h3>
-        <PaintEditor label="Fill" paint={primary.style.fill} onChange={(p) => apply(setFillCommand(ids, p))} />
-      </div>
+      {primary && (
+        <div className="panel-section">
+          <h3 className="panel-title">Fill</h3>
+          <PaintEditor label="Fill" paint={primary.style.fill} onChange={(p) => apply(setFillCommand(ids, p))} />
+          <AlphaControl
+            label="Fill α"
+            value={fillOpacity}
+            disabled={withFill.length === 0}
+            makeCommand={(o) => setFillOpacityCommand(ids, o)}
+            coalesceKey={`fill-opacity:${ids.join(",")}`}
+          />
+        </div>
+      )}
 
-      <div className="panel-section">
-        <h3 className="panel-title">Stroke</h3>
-        <PaintEditor label="Color" paint={primary.style.stroke} onChange={(p) => apply(setStrokeCommand(ids, p))} />
-        <NumberField
-          label="Width"
-          value={primary.style.strokeWidth}
-          step={0.5}
-          onCommit={(v) => apply(setStrokeWidthCommand(ids, v))}
-        />
-      </div>
+      {primary && (
+        <div className="panel-section">
+          <h3 className="panel-title">Stroke</h3>
+          <PaintEditor label="Color" paint={primary.style.stroke} onChange={(p) => apply(setStrokeCommand(ids, p))} />
+          <NumberField
+            label="Width"
+            value={primary.style.strokeWidth}
+            step={0.5}
+            onCommit={(v) => apply(setStrokeWidthCommand(ids, v))}
+          />
+          <AlphaControl
+            label="Stroke α"
+            value={strokeOpacity}
+            disabled={withStroke.length === 0}
+            makeCommand={(o) => setStrokeOpacityCommand(ids, o)}
+            coalesceKey={`stroke-opacity:${ids.join(",")}`}
+          />
+        </div>
+      )}
 
       {nodes.length === 1 && primary.type === "text" && <TextFields node={primary} />}
+      <PathEditFields />
     </>
   );
 }

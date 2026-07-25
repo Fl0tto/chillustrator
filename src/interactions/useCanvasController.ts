@@ -41,11 +41,23 @@ import {
 } from "./transformController";
 import { marqueeBounds, marqueeHits } from "./marqueeController";
 import { buildShape } from "./tools/shapeBuilder";
-import { collectSnapCandidates, snapMoveDelta, type SnapCandidates } from "./snapping";
+import {
+  collectSnapCandidates,
+  collectRotationAngles,
+  snapMove,
+  snapPoint,
+  snapRotation,
+  emptySnapState,
+  type SnapCandidates,
+  type SnapState,
+} from "./snapping";
+import { decompose } from "@/geometry/matrix";
+import { worldMatrix } from "@/geometry/nodeGeometry";
 import type { Matrix2D } from "@/model/types";
 
 const MIN_DRAG = 3; // px before a click becomes a drag
 const SNAP_PX = 6; // move-snap threshold in screen pixels
+const ROTATE_SNAP_DEG = 5; // rotation-snap threshold (angular, zoom-independent)
 
 type GestureKind = "idle" | "move" | "marquee" | "create" | "resize" | "rotate" | "pan";
 
@@ -67,6 +79,7 @@ interface Gesture {
   // move (snapping)
   selBounds?: Bounds;
   snapCandidates?: SnapCandidates;
+  snapState?: SnapState;
   // resize
   handle?: HandleId;
   anchor?: Point; // fixed point (root)
@@ -74,6 +87,8 @@ interface Gesture {
   // rotate
   center?: Point;
   startAngle?: number;
+  startOrientation?: number;
+  rotationAngles?: number[];
   // create
   createStart?: Point;
   // pan
@@ -152,8 +167,17 @@ export function useCanvasController(
       if (it.isGesture) patch.isGesture = false;
       if (it.marquee) patch.marquee = null;
       if (it.previewNode) patch.previewNode = null;
+      if (it.guides.length) patch.guides = [];
       if (Object.keys(patch).length) store.getState().setInteraction(patch);
       gesture = idle();
+    };
+
+    /** Current viewport rect in ROOT coordinates (for candidate filtering). */
+    const viewportRootBounds = (): Bounds => {
+      const rect = hostRect();
+      const tl = toRoot(rect.left, rect.top);
+      const br = toRoot(rect.right, rect.bottom);
+      return { minX: tl.x, minY: tl.y, maxX: br.x, maxY: br.y };
     };
 
     /** Cancel an in-progress gesture, restoring any transient DOM (Escape). */
@@ -202,8 +226,8 @@ export function useCanvasController(
         return;
       }
 
-      // Shape Builder owns left-click while active (see useShapeBuilder).
-      if (state.tool === "build") {
+      // Shape Builder / Pen / node editor own their own pointer handling.
+      if (state.tool === "build" || state.tool === "pen" || state.tool === "node") {
         gesture = idle();
         return;
       }
@@ -215,16 +239,27 @@ export function useCanvasController(
         const b = selectionWorldBounds(state.document, state.selection);
         if (!isEmptyBounds(b)) {
           gesture.snapshots = snapshot(state.selection);
+          const snapOn = state.preferences.snapEnabled;
           if (handleEl.hasAttribute("data-rotate")) {
             gesture.kind = "rotate";
             gesture.center = boundsCenter(b);
             gesture.startAngle = angleOf(gesture.center, root);
+            gesture.startOrientation =
+              state.selection.length === 1
+                ? decompose(worldMatrix(state.document, state.selection[0])).rotation
+                : 0;
+            if (snapOn) gesture.rotationAngles = collectRotationAngles(state.document, state.selection);
           } else {
             const handle = handleEl.getAttribute("data-handle") as HandleId;
             gesture.kind = "resize";
             gesture.handle = handle;
             gesture.startBounds = b;
             gesture.anchor = resizeAnchor(b, handle);
+            if (snapOn) {
+              gesture.snapCandidates = collectSnapCandidates(state.document, state.selection, {
+                viewport: viewportRootBounds(),
+              });
+            }
           }
           beginGesture();
           return;
@@ -261,8 +296,11 @@ export function useCanvasController(
         gesture.kind = "move";
         gesture.snapshots = snapshot(sel);
         gesture.selBounds = selectionWorldBounds(store.getState().document, sel);
+        gesture.snapState = emptySnapState();
         if (store.getState().preferences.snapEnabled) {
-          gesture.snapCandidates = collectSnapCandidates(store.getState().document, sel);
+          gesture.snapCandidates = collectSnapCandidates(store.getState().document, sel, {
+            viewport: viewportRootBounds(),
+          });
         }
         beginGesture();
       } else {
@@ -273,14 +311,73 @@ export function useCanvasController(
       }
     };
 
-    /** Snapped (dx, dy) for the active move gesture. */
-    const moveDelta = (root: Point): { dx: number; dy: number } => {
+    /** Snapped (dx, dy) for the active move gesture; publishes guides when live. */
+    const moveDelta = (root: Point, altKey: boolean, live: boolean): { dx: number; dy: number } => {
       const dx = root.x - gesture.startRoot.x;
       const dy = root.y - gesture.startRoot.y;
-      if (gesture.snapCandidates && gesture.selBounds && store.getState().preferences.snapEnabled) {
-        return snapMoveDelta(gesture.selBounds, dx, dy, gesture.snapCandidates, snapThreshold());
+      const enabled = store.getState().preferences.snapEnabled && !altKey;
+      if (enabled && gesture.snapCandidates && gesture.selBounds) {
+        const res = snapMove(
+          gesture.selBounds,
+          dx,
+          dy,
+          gesture.snapCandidates,
+          snapThreshold(),
+          gesture.snapState ?? emptySnapState(),
+        );
+        gesture.snapState = res.state;
+        if (live) store.getState().setInteraction({ guides: res.guides });
+        return { dx: res.dx, dy: res.dy };
       }
+      if (live) store.getState().setInteraction({ guides: [] });
       return { dx, dy };
+    };
+
+    /** Snap the dragged resize-handle pointer to candidates; publishes guides. */
+    const resizePointer = (root: Point, altKey: boolean, live: boolean): Point => {
+      const enabled = store.getState().preferences.snapEnabled && !altKey;
+      if (enabled && gesture.snapCandidates) {
+        const r = snapPoint(root, gesture.snapCandidates, snapThreshold());
+        if (live) store.getState().setInteraction({ guides: r.guides });
+        return { x: r.x, y: r.y };
+      }
+      if (live) store.getState().setInteraction({ guides: [] });
+      return root;
+    };
+
+    /** Rotation degrees with Shift (15°) taking precedence over smart snapping. */
+    const rotateDeg = (root: Point, shiftKey: boolean, altKey: boolean, live: boolean): number => {
+      let deg = rotationDegrees(gesture.center!, gesture.startAngle!, root);
+      if (shiftKey) {
+        deg = snapDegrees(deg, 15);
+        if (live) store.getState().setInteraction({ guides: [] });
+        return deg;
+      }
+      const enabled = store.getState().preferences.snapEnabled && !altKey;
+      if (enabled && gesture.rotationAngles && gesture.startOrientation !== undefined) {
+        const res = snapRotation(gesture.startOrientation + deg, gesture.rotationAngles, ROTATE_SNAP_DEG);
+        if (live) {
+          if (res.guide && gesture.center) {
+            store.getState().setInteraction({
+              guides: [
+                {
+                  axis: "x",
+                  value: gesture.center.x,
+                  from: gesture.center.y,
+                  to: gesture.center.y,
+                  label: res.guide,
+                  points: [gesture.center],
+                },
+              ],
+            });
+          } else {
+            store.getState().setInteraction({ guides: [] });
+          }
+        }
+        return res.deg - gesture.startOrientation;
+      }
+      if (live) store.getState().setInteraction({ guides: [] });
+      return deg;
     };
 
     // ---- pointer move -------------------------------------------------------
@@ -302,7 +399,7 @@ export function useCanvasController(
           break;
         }
         case "move": {
-          const { dx, dy } = moveDelta(root);
+          const { dx, dy } = moveDelta(root, e.altKey, true);
           applyTransient(translate(dx, dy));
           break;
         }
@@ -319,14 +416,13 @@ export function useCanvasController(
         }
         case "resize": {
           if (!gesture.anchor || !gesture.startBounds || !gesture.handle) break;
-          applyTransient(computeResizeWorld(gesture.startBounds, gesture.anchor, gesture.handle, root, e.shiftKey));
+          const pt = resizePointer(root, e.altKey, true);
+          applyTransient(computeResizeWorld(gesture.startBounds, gesture.anchor, gesture.handle, pt, e.shiftKey));
           break;
         }
         case "rotate": {
           if (!gesture.center || gesture.startAngle === undefined) break;
-          let deg = rotationDegrees(gesture.center, gesture.startAngle, root);
-          if (e.shiftKey) deg = snapDegrees(deg, 15);
-          applyTransient(rotateWorld(gesture.center, deg));
+          applyTransient(rotateWorld(gesture.center, rotateDeg(root, e.shiftKey, e.altKey, true)));
           break;
         }
         case "create": {
@@ -348,7 +444,7 @@ export function useCanvasController(
       switch (gesture.kind) {
         case "move": {
           if (gesture.moved) {
-            const { dx, dy } = moveDelta(root);
+            const { dx, dy } = moveDelta(root, e.altKey, false);
             if (dx !== 0 || dy !== 0) {
               const ids = gesture.snapshots.map((sn) => sn.id);
               s.apply(applyWorldTransformCommand(ids, translate(dx, dy), "Move"));
@@ -358,7 +454,8 @@ export function useCanvasController(
         }
         case "resize": {
           if (gesture.moved && gesture.anchor && gesture.startBounds && gesture.handle) {
-            const world = computeResizeWorld(gesture.startBounds, gesture.anchor, gesture.handle, root, e.shiftKey);
+            const pt = resizePointer(root, e.altKey, false);
+            const world = computeResizeWorld(gesture.startBounds, gesture.anchor, gesture.handle, pt, e.shiftKey);
             const ids = gesture.snapshots.map((sn) => sn.id);
             s.apply(applyWorldTransformCommand(ids, world, "Resize"));
           }
@@ -366,8 +463,7 @@ export function useCanvasController(
         }
         case "rotate": {
           if (gesture.moved && gesture.center && gesture.startAngle !== undefined) {
-            let deg = rotationDegrees(gesture.center, gesture.startAngle, root);
-            if (e.shiftKey) deg = snapDegrees(deg, 15);
+            const deg = rotateDeg(root, e.shiftKey, e.altKey, false);
             const ids = gesture.snapshots.map((sn) => sn.id);
             s.apply(applyWorldTransformCommand(ids, rotateWorld(gesture.center, deg), "Rotate"));
           }
@@ -432,6 +528,9 @@ export function useCanvasController(
       const s = store.getState();
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
+      // While the Pen / node editors are active they own Escape/Enter/Backspace
+      // and arrow keys; skip the destructive selection shortcuts for them.
+      const modal = s.tool === "pen" || s.tool === "node";
 
       // Undo / redo (HST-010).
       if (mod && key === "z") {
@@ -475,8 +574,8 @@ export function useCanvasController(
         }
         return;
       }
-      // Cancel / back-to-select.
-      if (e.key === "Escape") {
+      // Cancel / back-to-select (Pen/node editors handle their own Escape).
+      if (e.key === "Escape" && !modal) {
         e.preventDefault();
         if (gesture.kind !== "idle") cancelGesture();
         else s.setInteraction({ previewNode: null, marquee: null });
@@ -484,7 +583,7 @@ export function useCanvasController(
         return;
       }
       // Delete.
-      if ((e.key === "Delete" || e.key === "Backspace") && s.selection.length > 0) {
+      if (!modal && (e.key === "Delete" || e.key === "Backspace") && s.selection.length > 0) {
         e.preventDefault();
         s.apply(deleteNodesCommand(s.selection));
         s.clearSelection();
@@ -497,7 +596,7 @@ export function useCanvasController(
         ArrowUp: [0, -1],
         ArrowDown: [0, 1],
       };
-      if (nudge[e.key] && s.selection.length > 0) {
+      if (!modal && nudge[e.key] && s.selection.length > 0) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const [nx, ny] = nudge[e.key];
@@ -508,12 +607,14 @@ export function useCanvasController(
       if (!mod && !e.altKey) {
         const tools: Record<string, () => void> = {
           v: () => s.setTool("select"),
+          a: () => s.setTool("node"),
           r: () => s.setTool("rect"),
           e: () => s.setTool("ellipse"),
           l: () => s.setTool("line"),
-          p: () => s.setTool("polygon"),
+          g: () => s.setTool("polygon"),
           t: () => s.setTool("text"),
           b: () => s.setTool("build"),
+          p: () => s.setTool("pen"),
         };
         const fn = tools[key];
         if (fn) fn();
