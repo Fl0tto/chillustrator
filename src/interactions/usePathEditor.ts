@@ -34,6 +34,8 @@ import {
 } from "@/geometry/editablePath";
 import { serializePath } from "@/geometry/pathData";
 import { updateNodeGeometryCommand } from "@/commands/transformCommands";
+import { convertToPathCommand } from "@/commands/geometryCommands";
+import { isConvertibleToPath } from "@/geometry/pathConvert";
 import {
   collectSnapCandidates,
   snapPoint,
@@ -42,6 +44,28 @@ import {
 
 const PATH_PRECISION = 4;
 const SNAP_PX = 6;
+/** Screen-space pick radius (÷zoom → root units) for corner-tool body clicks. */
+const CORNER_PICK_PX = 24;
+
+/** Flat index of the anchor nearest `rootPt` (world coords) within `threshold`, or -1. */
+function nearestAnchorFlatIndex(
+  path: EditablePath,
+  world: Matrix2D,
+  rootPt: Point,
+  threshold: number,
+): number {
+  let best = -1;
+  let bestDist = threshold;
+  for (const { index, a } of flatAnchors(path)) {
+    const w = applyToPoint(world, anchorPoint(a));
+    const d = Math.hypot(w.x - rootPt.x, w.y - rootPt.y);
+    if (d <= bestDist) {
+      bestDist = d;
+      best = index;
+    }
+  }
+  return best;
+}
 
 type DragKind = "none" | "anchor" | "handle" | "radius";
 
@@ -96,7 +120,7 @@ export function usePathEditor(
 
     /** Snap a LOCAL anchor point via world-space candidates; publishes guides. */
     const snapLocal = (local: Point, alt: boolean): Point => {
-      if (alt || !store.getState().preferences.snapEnabled) {
+      if (alt || !store.getState().preferences.snapAlignment) {
         store.getState().setInteraction({ guides: [] });
         return local;
       }
@@ -124,7 +148,9 @@ export function usePathEditor(
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      if (store.getState().tool !== "node" || e.button !== 0) return;
+      const tool = store.getState().tool;
+      const cornerTool = tool === "corner";
+      if ((tool !== "node" && !cornerTool) || e.button !== 0) return;
       const target = e.target as Element | null;
 
       // Ensure we have a session for the clicked / selected path.
@@ -133,6 +159,33 @@ export function usePathEditor(
       const handleAttr = target?.closest?.("[data-pen-handle]") as Element | null;
       const radiusAttr = target?.closest?.("[data-pen-radius]") as Element | null;
       const nodeAttr = target?.closest?.("path[data-node-id]") as Element | null;
+
+      // Corner tool: (re)target the session to the shape under the cursor,
+      // silently converting a primitive to an editable path first when needed.
+      if (cornerTool && !anchorAttr && !handleAttr && !radiusAttr) {
+        const anyEl = target?.closest?.("[data-node-id]") as Element | null;
+        const clickedId = anyEl?.getAttribute("data-node-id") ?? null;
+        if (clickedId && (!s || s.nodeId !== clickedId)) {
+          const node = store.getState().document.nodes[clickedId];
+          if (node?.type === "path") {
+            const fresh = sessionFromNode(clickedId);
+            if (fresh) {
+              store.getState().setPathEdit(fresh);
+              store.getState().setSelection([clickedId]);
+              s = fresh;
+            }
+          } else if (node && isConvertibleToPath(node)) {
+            let newId = clickedId;
+            store.getState().apply(convertToPathCommand(clickedId, (nid) => (newId = nid)));
+            const fresh = sessionFromNode(newId);
+            if (fresh) {
+              store.getState().setPathEdit(fresh);
+              store.getState().setSelection([newId]);
+              s = fresh;
+            }
+          }
+        }
+      }
 
       if (!s) {
         const id = nodeAttr?.getAttribute("data-node-id");
@@ -148,6 +201,28 @@ export function usePathEditor(
       }
       setWorldFor(s.nodeId);
       candidates = null;
+
+      // Corner tool: a click on the shape body (not a grip) selects the nearest
+      // corner so the radius grip / Corner-R field targets it — no need to hit the
+      // tiny anchor dot exactly.
+      if (cornerTool && !anchorAttr && !handleAttr && !radiusAttr) {
+        const rootPt = toRoot(e.clientX, e.clientY);
+        const threshold = CORNER_PICK_PX / store.getState().viewport.zoom;
+        const near = nearestAnchorFlatIndex(s.path, world, rootPt, threshold);
+        if (near >= 0) {
+          const already = s.selected.includes(near);
+          const selected = e.shiftKey
+            ? already
+              ? s.selected.filter((i) => i !== near)
+              : [...s.selected, near]
+            : [near];
+          store.getState().setPathEdit({ ...s, selected });
+        } else if (!e.shiftKey) {
+          store.getState().setPathEdit({ ...s, selected: [] });
+        }
+        drag = "none";
+        return;
+      }
 
       host.setPointerCapture(e.pointerId);
       pointerId = e.pointerId;
@@ -267,7 +342,7 @@ export function usePathEditor(
       // Auto-open a session when the node tool is active with a single path
       // selected (e.g. right after the Pen tool finishes a drawing).
       if (!s) {
-        if (state.tool === "node" && state.selection.length === 1) {
+        if ((state.tool === "node" || state.tool === "corner") && state.selection.length === 1) {
           const node = state.document.nodes[state.selection[0]];
           if (node && node.type === "path") {
             const fresh = sessionFromNode(node.id);

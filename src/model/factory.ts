@@ -23,8 +23,8 @@ export function solidPaint(color: string, opacity = 1): PaintReference {
 
 export function defaultStyle(overrides: Partial<NodeStyle> = {}): NodeStyle {
   return {
-    fill: solidPaint("#4c8bf5", 1),
-    stroke: null,
+    fill: null,
+    stroke: solidPaint("#000000", 1),
     strokeWidth: 1,
     strokeLinecap: "butt",
     strokeLinejoin: "miter",

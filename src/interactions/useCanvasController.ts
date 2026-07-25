@@ -44,12 +44,18 @@ import { buildShape } from "./tools/shapeBuilder";
 import {
   collectSnapCandidates,
   collectRotationAngles,
+  collectPointSnapTargets,
+  movingVerticesWorld,
   snapMove,
+  snapMoveToGrid,
+  snapNearestPoint,
   snapPoint,
+  snapToGrid,
   snapRotation,
   emptySnapState,
   type SnapCandidates,
   type SnapState,
+  type SnapGuide,
 } from "./snapping";
 import { decompose } from "@/geometry/matrix";
 import { worldMatrix } from "@/geometry/nodeGeometry";
@@ -80,6 +86,9 @@ interface Gesture {
   selBounds?: Bounds;
   snapCandidates?: SnapCandidates;
   snapState?: SnapState;
+  // point snapping (nearest vertex → nearest vertex)
+  movingVerts?: Point[];
+  pointTargets?: Point[];
   // resize
   handle?: HandleId;
   anchor?: Point; // fixed point (root)
@@ -194,6 +203,13 @@ export function useCanvasController(
     /** Root-space snap threshold for the move gesture. */
     const snapThreshold = () => SNAP_PX / store.getState().viewport.zoom;
 
+    /** Grid-snap a root point when grid snapping is on and Alt is not held. */
+    const gridSnapPoint = (p: Point, altKey: boolean): Point => {
+      const prefs = store.getState().preferences;
+      if (altKey || !prefs.snapGrid) return p;
+      return { x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize) };
+    };
+
     const selectableAt = (target: EventTarget | null): string | null => {
       if (!(target instanceof Element)) return null;
       const el = target.closest("[data-node-id]");
@@ -226,8 +242,13 @@ export function useCanvasController(
         return;
       }
 
-      // Shape Builder / Pen / node editor own their own pointer handling.
-      if (state.tool === "build" || state.tool === "pen" || state.tool === "node") {
+      // Shape Builder / Pen / node & corner editors own their own pointer handling.
+      if (
+        state.tool === "build" ||
+        state.tool === "pen" ||
+        state.tool === "node" ||
+        state.tool === "corner"
+      ) {
         gesture = idle();
         return;
       }
@@ -239,7 +260,7 @@ export function useCanvasController(
         const b = selectionWorldBounds(state.document, state.selection);
         if (!isEmptyBounds(b)) {
           gesture.snapshots = snapshot(state.selection);
-          const snapOn = state.preferences.snapEnabled;
+          const snapOn = state.preferences.snapAlignment;
           if (handleEl.hasAttribute("data-rotate")) {
             gesture.kind = "rotate";
             gesture.center = boundsCenter(b);
@@ -278,7 +299,7 @@ export function useCanvasController(
           return;
         }
         gesture.kind = "create";
-        gesture.createStart = root;
+        gesture.createStart = gridSnapPoint(root, e.altKey);
         beginGesture();
         return;
       }
@@ -297,10 +318,16 @@ export function useCanvasController(
         gesture.snapshots = snapshot(sel);
         gesture.selBounds = selectionWorldBounds(store.getState().document, sel);
         gesture.snapState = emptySnapState();
-        if (store.getState().preferences.snapEnabled) {
-          gesture.snapCandidates = collectSnapCandidates(store.getState().document, sel, {
+        const prefs = store.getState().preferences;
+        const doc = store.getState().document;
+        if (prefs.snapAlignment) {
+          gesture.snapCandidates = collectSnapCandidates(doc, sel, {
             viewport: viewportRootBounds(),
           });
+        }
+        if (prefs.snapPoint) {
+          gesture.movingVerts = movingVerticesWorld(doc, sel);
+          gesture.pointTargets = collectPointSnapTargets(doc, sel, viewportRootBounds());
         }
         beginGesture();
       } else {
@@ -311,12 +338,19 @@ export function useCanvasController(
       }
     };
 
-    /** Snapped (dx, dy) for the active move gesture; publishes guides when live. */
+    /**
+     * Snapped (dx, dy) for the active move gesture; publishes guides when live.
+     * Combinable modes compose in order: alignment → point → grid (grid quantizes
+     * last so a grid-snapped drag always lands exactly on the grid). Alt bypasses all.
+     */
     const moveDelta = (root: Point, altKey: boolean, live: boolean): { dx: number; dy: number } => {
-      const dx = root.x - gesture.startRoot.x;
-      const dy = root.y - gesture.startRoot.y;
-      const enabled = store.getState().preferences.snapEnabled && !altKey;
-      if (enabled && gesture.snapCandidates && gesture.selBounds) {
+      let dx = root.x - gesture.startRoot.x;
+      let dy = root.y - gesture.startRoot.y;
+      const prefs = store.getState().preferences;
+      const bypass = altKey;
+      const guides: SnapGuide[] = [];
+
+      if (!bypass && prefs.snapAlignment && gesture.snapCandidates && gesture.selBounds) {
         const res = snapMove(
           gesture.selBounds,
           dx,
@@ -326,20 +360,40 @@ export function useCanvasController(
           gesture.snapState ?? emptySnapState(),
         );
         gesture.snapState = res.state;
-        if (live) store.getState().setInteraction({ guides: res.guides });
-        return { dx: res.dx, dy: res.dy };
+        dx = res.dx;
+        dy = res.dy;
+        guides.push(...res.guides);
       }
-      if (live) store.getState().setInteraction({ guides: [] });
+
+      if (!bypass && prefs.snapPoint && gesture.movingVerts && gesture.pointTargets) {
+        const res = snapNearestPoint(gesture.movingVerts, gesture.pointTargets, dx, dy, snapThreshold());
+        dx = res.dx;
+        dy = res.dy;
+        guides.push(...res.guides);
+      }
+
+      if (!bypass && prefs.snapGrid && gesture.selBounds) {
+        const res = snapMoveToGrid(gesture.selBounds, dx, dy, prefs.gridSize);
+        dx = res.dx;
+        dy = res.dy;
+      }
+
+      if (live) store.getState().setInteraction({ guides });
       return { dx, dy };
     };
 
-    /** Snap the dragged resize-handle pointer to candidates; publishes guides. */
+    /** Snap the dragged resize-handle pointer to candidates/grid; publishes guides. */
     const resizePointer = (root: Point, altKey: boolean, live: boolean): Point => {
-      const enabled = store.getState().preferences.snapEnabled && !altKey;
-      if (enabled && gesture.snapCandidates) {
+      const prefs = store.getState().preferences;
+      const bypass = altKey;
+      if (!bypass && prefs.snapAlignment && gesture.snapCandidates) {
         const r = snapPoint(root, gesture.snapCandidates, snapThreshold());
         if (live) store.getState().setInteraction({ guides: r.guides });
         return { x: r.x, y: r.y };
+      }
+      if (!bypass && prefs.snapGrid) {
+        if (live) store.getState().setInteraction({ guides: [] });
+        return { x: snapToGrid(root.x, prefs.gridSize), y: snapToGrid(root.y, prefs.gridSize) };
       }
       if (live) store.getState().setInteraction({ guides: [] });
       return root;
@@ -353,7 +407,7 @@ export function useCanvasController(
         if (live) store.getState().setInteraction({ guides: [] });
         return deg;
       }
-      const enabled = store.getState().preferences.snapEnabled && !altKey;
+      const enabled = store.getState().preferences.snapAlignment && !altKey;
       if (enabled && gesture.rotationAngles && gesture.startOrientation !== undefined) {
         const res = snapRotation(gesture.startOrientation + deg, gesture.rotationAngles, ROTATE_SNAP_DEG);
         if (live) {
@@ -427,7 +481,14 @@ export function useCanvasController(
         }
         case "create": {
           if (!gesture.createStart) break;
-          const preview = buildShape(store.getState().tool, gesture.createStart, root, e.shiftKey);
+          const preview = buildShape(
+            store.getState().tool,
+            gesture.createStart,
+            gridSnapPoint(root, e.altKey),
+            e.shiftKey,
+            undefined,
+            store.getState().defaultStyle,
+          );
           store.getState().setInteraction({ previewNode: preview });
           break;
         }
@@ -481,7 +542,14 @@ export function useCanvasController(
         }
         case "create": {
           if (gesture.moved && gesture.createStart) {
-            const node = buildShape(s.tool, gesture.createStart, root, e.shiftKey);
+            const node = buildShape(
+              s.tool,
+              gesture.createStart,
+              gridSnapPoint(root, e.altKey),
+              e.shiftKey,
+              undefined,
+              s.defaultStyle,
+            );
             if (node) {
               s.apply(addNodeCommand(node, null, undefined, "Add object"));
               s.setSelection([node.id]);
@@ -598,7 +666,9 @@ export function useCanvasController(
       };
       if (!modal && nudge[e.key] && s.selection.length > 0) {
         e.preventDefault();
-        const step = e.shiftKey ? 10 : 1;
+        // With grid snapping on, nudge by a whole grid cell (Shift ×10 cells).
+        const grid = s.preferences.snapGrid ? Math.max(s.preferences.gridSize, 1) : 1;
+        const step = (e.shiftKey ? 10 : 1) * grid;
         const [nx, ny] = nudge[e.key];
         s.apply(applyWorldTransformCommand(s.selection, translate(nx * step, ny * step), "Nudge"));
         return;
@@ -615,6 +685,7 @@ export function useCanvasController(
           t: () => s.setTool("text"),
           b: () => s.setTool("build"),
           p: () => s.setTool("pen"),
+          c: () => s.setTool("corner"),
         };
         const fn = tools[key];
         if (fn) fn();

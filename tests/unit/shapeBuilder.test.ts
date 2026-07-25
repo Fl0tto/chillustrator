@@ -16,6 +16,7 @@ import {
 import { createRect } from "@/model/factory";
 import { parsePath } from "@/geometry/pathParser";
 import { geometryBounds } from "@/geometry/pathData";
+import { rotate } from "@/geometry/matrix";
 import type { PathNode } from "@/model/types";
 
 function reset() {
@@ -24,6 +25,12 @@ function reset() {
 
 function addRect(x: number, y: number, w: number, h: number) {
   const rect = createRect({ x, y, width: w, height: h });
+  useEditorStore.getState().apply(addNodeCommand(rect));
+  return rect.id;
+}
+
+function addRotatedRect(x: number, y: number, w: number, h: number, deg: number) {
+  const rect = createRect({ x, y, width: w, height: h, transform: rotate(deg, x + w / 2, y + h / 2) });
   useEditorStore.getState().apply(addNodeCommand(rect));
   return rect.id;
 }
@@ -46,6 +53,29 @@ describe("computeFaces — arrangement", () => {
     const faces = computeFaces(buildOperands(useEditorStore.getState().document, [a, b]));
     // The overlap region [5,10]x[0,10]; its center (7.5,5) is in exactly one face.
     const hits = faces.filter((f) => pointInMultiPolygon({ x: 7.5, y: 5 }, f.polygon));
+    expect(hits).toHaveLength(1);
+  });
+
+  it("fragments two concentric squares (one at 45°) into individually pickable faces", () => {
+    // The Star-of-Lakshmi overlap: a central octagon plus four corner triangles
+    // from EACH square. Before the connected-component fix these arrived as three
+    // faces (center + all-of-A + all-of-B); now every triangle is its own face.
+    const a = addRect(0, 0, 10, 10);
+    const b = addRotatedRect(0, 0, 10, 10, 45);
+    const faces = computeFaces(buildOperands(useEditorStore.getState().document, [a, b]));
+    // 1 central region + 4 + 4 corner triangles.
+    expect(faces.length).toBe(9);
+
+    // Clicking one protruding corner selects ONLY that small triangle, not all four.
+    // The top corner of the rotated square pokes out above the axis-aligned square
+    // near (5, -2.07). Its face area must be far smaller than the whole document.
+    const cornerIdx = faceAtPoint(faces, { x: 5, y: -1.5 });
+    expect(cornerIdx).toBeGreaterThanOrEqual(0);
+    const cornerFace = faces[cornerIdx];
+    // A single corner triangle is a small sliver (well under a quarter of a 10×10).
+    expect(cornerFace.area).toBeLessThan(10);
+    // And no other face shares that exact sample point (faces are disjoint).
+    const hits = faces.filter((f) => pointInMultiPolygon({ x: 5, y: -1.5 }, f.polygon));
     expect(hits).toHaveLength(1);
   });
 

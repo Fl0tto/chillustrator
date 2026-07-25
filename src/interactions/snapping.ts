@@ -20,6 +20,7 @@ import { selectionWorldBounds, worldMatrix } from "@/geometry/nodeGeometry";
 import { isEmptyBounds, boundsIntersect } from "@/geometry/bounds";
 import { isEffectivelyVisible, isEffectivelyLocked } from "@/model/tree";
 import { parsePath } from "@/geometry/pathParser";
+import { nodeToGeometry } from "@/geometry/pathConvert";
 import { applyToPoint } from "@/geometry/matrix";
 
 export type Axis = "x" | "y";
@@ -463,4 +464,132 @@ function shortestDelta(from: number, to: number): number {
   while (d > 180) d -= 360;
   while (d < -180) d += 360;
   return d;
+}
+
+// ---------------------------------------------------------------------------
+// Grid snapping — quantize to a fixed pixel grid
+// ---------------------------------------------------------------------------
+
+/** Round a single value to the nearest multiple of `size` (no-op when size ≤ 0). */
+export function snapToGrid(value: number, size: number): number {
+  if (size <= 0) return value;
+  return Math.round(value / size) * size;
+}
+
+/**
+ * Adjust a raw (dx, dy) move so the moved bounds' top-left lands on the grid.
+ * Quantizing the origin keeps the object's size intact while aligning it to the
+ * grid — the same convention Illustrator/Figma use for grid-snapped drags.
+ */
+export function snapMoveToGrid(
+  startBounds: Bounds,
+  dx: number,
+  dy: number,
+  size: number,
+): { dx: number; dy: number } {
+  if (size <= 0 || isEmptyBounds(startBounds)) return { dx, dy };
+  const nx = snapToGrid(startBounds.minX + dx, size);
+  const ny = snapToGrid(startBounds.minY + dy, size);
+  return { dx: nx - startBounds.minX, dy: ny - startBounds.minY };
+}
+
+// ---------------------------------------------------------------------------
+// Point snapping — nearest vertex of the moving object → nearest vertex of others
+// ---------------------------------------------------------------------------
+
+/** All vertices (M/L/C endpoints) of a node in WORLD coordinates, or []. */
+export function objectVerticesWorld(doc: SvgDocumentModel, id: string): Point[] {
+  const node = doc.nodes[id];
+  if (!node) return [];
+  const geo = nodeToGeometry(node);
+  if (!geo) return [];
+  const m = worldMatrix(doc, id);
+  const pts: Point[] = [];
+  for (const seg of geo.segments) {
+    if (seg.type === "M" || seg.type === "L" || seg.type === "C") {
+      pts.push(applyToPoint(m, { x: seg.x, y: seg.y }));
+      if (pts.length >= MAX_ANCHOR_CANDIDATES) break;
+    }
+  }
+  return pts;
+}
+
+/** Vertices of the moving selection (world coords) — the points we may snap FROM. */
+export function movingVerticesWorld(doc: SvgDocumentModel, ids: Iterable<string>): Point[] {
+  const pts: Point[] = [];
+  for (const id of ids) {
+    for (const p of objectVerticesWorld(doc, id)) {
+      pts.push(p);
+      if (pts.length >= MAX_ANCHOR_CANDIDATES) return pts;
+    }
+  }
+  return pts;
+}
+
+/** Vertices of all other visible/unlocked objects (world) — points we may snap TO. */
+export function collectPointSnapTargets(
+  doc: SvgDocumentModel,
+  excludeIds: Iterable<string>,
+  viewport?: Bounds,
+): Point[] {
+  const exclude = new Set(excludeIds);
+  const pts: Point[] = [];
+  for (const id of doc.rootNodeIds) {
+    if (exclude.has(id) || !isEffectivelyVisible(doc, id) || isEffectivelyLocked(doc, id)) continue;
+    const b = selectionWorldBounds(doc, [id]);
+    if (isEmptyBounds(b)) continue;
+    if (viewport && !boundsIntersect(viewport, b)) continue;
+    for (const p of objectVerticesWorld(doc, id)) {
+      pts.push(p);
+      if (pts.length >= MAX_ANCHOR_CANDIDATES) return pts;
+    }
+  }
+  return pts;
+}
+
+export interface PointMoveSnap {
+  dx: number;
+  dy: number;
+  guides: SnapGuide[];
+}
+
+/**
+ * Given a raw (dx, dy) move, find the moving vertex (already translated by the
+ * raw delta) closest to any target vertex within `threshold` (2D euclidean, not
+ * per-axis) and adjust the delta so that pair coincides. Emits a dot guide at
+ * the snapped target.
+ */
+export function snapNearestPoint(
+  movingVerts: Point[],
+  targetVerts: Point[],
+  dx: number,
+  dy: number,
+  threshold: number,
+): PointMoveSnap {
+  if (threshold <= 0 || movingVerts.length === 0 || targetVerts.length === 0) {
+    return { dx, dy, guides: [] };
+  }
+  let best: { ddx: number; ddy: number; dist: number; target: Point } | null = null;
+  for (const mv of movingVerts) {
+    const px = mv.x + dx;
+    const py = mv.y + dy;
+    for (const tv of targetVerts) {
+      const dist = Math.hypot(tv.x - px, tv.y - py);
+      if (dist <= threshold && (!best || dist < best.dist)) {
+        best = { ddx: tv.x - px, ddy: tv.y - py, dist, target: tv };
+      }
+    }
+  }
+  if (!best) return { dx, dy, guides: [] };
+  const guides: SnapGuide[] = [
+    {
+      axis: "x",
+      value: best.target.x,
+      from: best.target.y,
+      to: best.target.y,
+      label: "Point",
+      points: [best.target],
+    },
+  ];
+  return { dx: dx + best.ddx, dy: dy + best.ddy, guides };
 }

@@ -10,6 +10,7 @@ import { SCHEMA_VERSION } from "@/model/types";
 
 const STORAGE_KEY = "chillustrator:document:v1";
 const PREFS_KEY = "chillustrator:preferences:v1";
+const DEFAULT_STYLE_KEY = "chillustrator:defaultStyle:v1";
 
 interface StoredEnvelope {
   schemaVersion: number;
@@ -93,6 +94,32 @@ export function loadPreferences(): Record<string, unknown> {
     return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
+  }
+}
+
+/**
+ * Persist the "last used" style seeded into newly created shapes, so the user's
+ * chosen fill/stroke carries across reloads. Stored separately from the document.
+ */
+export function saveDefaultStyle(style: unknown): void {
+  if (!hasStorage()) return;
+  try {
+    localStorage.setItem(DEFAULT_STYLE_KEY, JSON.stringify(style));
+  } catch {
+    // ignore quota / serialization failures
+  }
+}
+
+/** Load the persisted default style, or null when absent/invalid. */
+export function loadDefaultStyle(): Record<string, unknown> | null {
+  if (!hasStorage()) return null;
+  try {
+    const raw = localStorage.getItem(DEFAULT_STYLE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
   }
 }
 

@@ -41,7 +41,7 @@ async function resetViewport(page: Page) {
     s.newDocument(800, 600);
     s.setViewport({ zoom: 1, panX: 0, panY: 0 });
     s.clearSelection();
-    s.setPreferences({ snapEnabled: true });
+    s.setPreferences({ snapAlignment: true });
   });
 }
 
@@ -61,13 +61,16 @@ test("smart guides · fill alpha · pen create · path edit · export · undo/re
   const host = await hostOrigin(page);
   const at = (x: number, y: number) => ({ x: host.x + x, y: host.y + y });
 
-  // --- Smart Guides toggle shows a visible enabled state ---------------------
-  const guidesToggle = page.getByTestId("toggle-smart-guides");
-  await expect(guidesToggle).toHaveAttribute("aria-pressed", "true");
-  await guidesToggle.click();
-  await expect(guidesToggle).toHaveAttribute("aria-pressed", "false");
-  await guidesToggle.click();
-  await expect(guidesToggle).toHaveAttribute("aria-pressed", "true");
+  // --- Snapping menu: toggling Alignment updates the button's enabled state ---
+  const snapToggle = page.getByTestId("toggle-snapping");
+  await expect(snapToggle).toHaveAttribute("aria-pressed", "true");
+  await snapToggle.click(); // open popover
+  const alignCheckbox = page.getByRole("checkbox", { name: "Alignment guides" });
+  await alignCheckbox.uncheck();
+  await expect(snapToggle).toHaveAttribute("aria-pressed", "false");
+  await alignCheckbox.check();
+  await expect(snapToggle).toHaveAttribute("aria-pressed", "true");
+  await snapToggle.click(); // close popover
 
   // --- Custom path creation with the Pen tool --------------------------------
   await page.getByRole("button", { name: "Pen (P)" }).click();

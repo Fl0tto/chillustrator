@@ -8,7 +8,7 @@
  */
 import { createEllipse, createLine, createPolygon, createRect, regularPolygonPoints } from "@/model/factory";
 import type { Point } from "@/geometry/matrix";
-import type { SvgNode } from "@/model/types";
+import type { NodeStyle, SvgNode } from "@/model/types";
 import type { ToolId } from "@/store/editorStore";
 import { MIN_SIZE } from "../transformController";
 
@@ -41,6 +41,9 @@ export function snapLineAngle(start: Point, end: Point): Point {
  *  - line: snap to 45° increments,
  *  - polygon: (no effect — always regular).
  * Returns null for non-creation tools ("select"/"text" are handled by the hook).
+ *
+ * `style` (the store's sticky "last used" style) seeds the node's appearance so
+ * new shapes inherit the user's most recent fill/stroke choices.
  */
 export function buildShape(
   tool: ToolId,
@@ -48,6 +51,7 @@ export function buildShape(
   end: Point,
   constrain: boolean,
   sides: number = polygonSides,
+  style?: Partial<NodeStyle>,
 ): SvgNode | null {
   const x = Math.min(start.x, end.x);
   const y = Math.min(start.y, end.y);
@@ -60,23 +64,24 @@ export function buildShape(
   }
   switch (tool) {
     case "rect":
-      return createRect({ x, y, width: Math.max(w, MIN_SIZE), height: Math.max(h, MIN_SIZE) });
+      return createRect({ x, y, width: Math.max(w, MIN_SIZE), height: Math.max(h, MIN_SIZE), style });
     case "ellipse":
       return createEllipse({
         cx: x + w / 2,
         cy: y + h / 2,
         rx: Math.max(w / 2, MIN_SIZE / 2),
         ry: Math.max(h / 2, MIN_SIZE / 2),
+        style,
       });
     case "line": {
       const e = constrain ? snapLineAngle(start, end) : end;
-      return createLine({ x1: start.x, y1: start.y, x2: e.x, y2: e.y });
+      return createLine({ x1: start.x, y1: start.y, x2: e.x, y2: e.y, style });
     }
     case "polygon": {
       const cx = x + w / 2;
       const cy = y + h / 2;
       const radius = Math.max(Math.max(w, h) / 2, MIN_SIZE);
-      return createPolygon({ points: regularPolygonPoints(cx, cy, radius, sides) });
+      return createPolygon({ points: regularPolygonPoints(cx, cy, radius, sides), style });
     }
     default:
       return null;

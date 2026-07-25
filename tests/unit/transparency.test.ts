@@ -90,7 +90,15 @@ describe("coalesced slider undo (HST-002)", () => {
   });
 
   const addRect = (): string => {
-    const rect = createRect({ x: 0, y: 0, width: 10, height: 10 });
+    // Explicit fill: the default style is now fill:none, but these tests exercise
+    // fill-opacity coalescing and need a fillable node to act on.
+    const rect = createRect({
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+      style: { fill: solidPaint("#4c8bf5", 1) },
+    });
     useEditorStore.getState().apply(addNodeCommand(rect, null, undefined, "Add"));
     return rect.id;
   };

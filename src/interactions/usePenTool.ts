@@ -77,7 +77,7 @@ export function usePenTool(hostRef: RefObject<HTMLDivElement | null>): void {
 
     /** Snap a root point unless Alt bypasses; also publishes guides. */
     const snap = (p: Point, alt: boolean): Point => {
-      if (alt || !store.getState().preferences.snapEnabled) {
+      if (alt || !store.getState().preferences.snapAlignment) {
         store.getState().setInteraction({ guides: [] });
         return p;
       }
@@ -103,7 +103,11 @@ export function usePenTool(hostRef: RefObject<HTMLDivElement | null>): void {
         return;
       }
       const geometry = toGeometry(draftToEditable(d.anchors, closed));
-      const node = createPath({ d: serializePath(geometry, PATH_PRECISION), name: "Path" });
+      const node = createPath({
+        d: serializePath(geometry, PATH_PRECISION),
+        name: "Path",
+        style: store.getState().defaultStyle,
+      });
       store.getState().apply(addNodeCommand(node, null, undefined, "Draw path"));
       store.getState().setPenDraft(null);
       store.getState().setInteraction({ guides: [] });

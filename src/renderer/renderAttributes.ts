@@ -58,5 +58,9 @@ export function baseNodeProps(node: SvgNode) {
     "data-node-type": node.type,
     transform: toSvgTransform(node.transform),
     opacity: node.opacity === 1 ? undefined : node.opacity,
+    // Hit-area is decoupled from paint: the interior stays clickable even when
+    // fill is "none" (default for new shapes). Overlays/artboard stay
+    // pointer-events:none; the live preview is inert via pointer capture.
+    pointerEvents: "all" as const,
   };
 }

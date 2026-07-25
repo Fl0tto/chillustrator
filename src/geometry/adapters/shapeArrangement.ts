@@ -51,6 +51,29 @@ function nonEmpty(mp: MultiPolygon): boolean {
   return mp.length > 0 && multiPolygonArea(mp) > MIN_FACE_AREA;
 }
 
+/**
+ * Split a MultiPolygon into its connected components. polygon-clipping already
+ * returns each disjoint island as a separate `Polygon` ([outerRing, ...holes]),
+ * so one component === one Polygon wrapped as its own MultiPolygon. Without this
+ * the four corner triangles of an overlap arrive as a single 4-island Face and
+ * become un-pickable individually (they toggle as one). Slivers are dropped
+ * per island so a tiny fragment can't drag a whole component below MIN_FACE_AREA
+ * or vice-versa.
+ */
+function splitConnected(mp: MultiPolygon): MultiPolygon[] {
+  const out: MultiPolygon[] = [];
+  for (const poly of mp) {
+    const island: MultiPolygon = [poly];
+    if (nonEmpty(island)) out.push(island);
+  }
+  return out;
+}
+
+/** Push each connected component of `mp` as its own face. */
+function pushComponents(target: MultiPolygon[], mp: MultiPolygon): void {
+  for (const island of splitConnected(mp)) target.push(island);
+}
+
 /** Ray-cast test: is a point inside a single closed ring? */
 function pointInRing(p: Point, ring: [number, number][]): boolean {
   let inside = false;
@@ -105,8 +128,9 @@ export function computeFaces(operands: BooleanOperand[]): Face[] {
         next.push(face);
         continue;
       }
-      if (nonEmpty(inside)) next.push(inside);
-      if (nonEmpty(outside)) next.push(outside);
+      // Split into connected components so each disjoint island is its own face.
+      if (nonEmpty(inside)) pushComponents(next, inside);
+      if (nonEmpty(outside)) pushComponents(next, outside);
       // Whatever the new shape shares with an existing face is no longer "new".
       try {
         remainder = polygonClipping.difference(remainder, face);
@@ -114,7 +138,7 @@ export function computeFaces(operands: BooleanOperand[]): Face[] {
         /* keep remainder as-is */
       }
     }
-    if (nonEmpty(remainder)) next.push(remainder);
+    if (nonEmpty(remainder)) pushComponents(next, remainder);
     faces = next.filter(nonEmpty);
   }
 

@@ -13,6 +13,7 @@ import { SvgNodeRenderer, StaticSvgNode } from "./SvgNodeRenderer";
 import { DefsRenderer } from "./DefsRenderer";
 
 const CHECKER = "chill-checker";
+const GRID = "chill-grid";
 
 export const ArtworkSvg = forwardRef<SVGSVGElement>(function ArtworkSvg(_props, ref) {
   const rootNodeIds = useEditorStore(useShallow((s) => s.document.rootNodeIds));
@@ -20,9 +21,13 @@ export const ArtworkSvg = forwardRef<SVGSVGElement>(function ArtworkSvg(_props, 
   const height = useEditorStore((s) => s.document.height);
   const viewport = useEditorStore(useShallow((s) => s.viewport));
   const showChecker = useEditorStore((s) => s.preferences.showCheckerboard);
+  const showGrid = useEditorStore((s) => s.preferences.snapGrid);
+  const gridSize = useEditorStore((s) => s.preferences.gridSize);
   const previewNode = useEditorStore((s) => s.interaction.previewNode);
 
   const groupTransform = `translate(${viewport.panX} ${viewport.panY}) scale(${viewport.zoom})`;
+  // Keep grid lines ~1 device px regardless of zoom (pattern lives in user space).
+  const gridStroke = 1 / Math.max(viewport.zoom, 1e-6);
 
   return (
     <svg
@@ -39,6 +44,17 @@ export const ArtworkSvg = forwardRef<SVGSVGElement>(function ArtworkSvg(_props, 
           <rect width="10" height="10" fill="#e6e6e9" />
           <rect x="10" y="10" width="10" height="10" fill="#e6e6e9" />
         </pattern>
+        {showGrid && gridSize > 0 && (
+          <pattern id={GRID} width={gridSize} height={gridSize} patternUnits="userSpaceOnUse">
+            <path
+              d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`}
+              fill="none"
+              stroke="#7c83a3"
+              strokeOpacity={0.35}
+              strokeWidth={gridStroke}
+            />
+          </pattern>
+        )}
       </defs>
       <g transform={groupTransform}>
         {/* Artboard background */}
@@ -50,6 +66,17 @@ export const ArtworkSvg = forwardRef<SVGSVGElement>(function ArtworkSvg(_props, 
           fill={showChecker ? `url(#${CHECKER})` : "#ffffff"}
           data-artboard="true"
         />
+        {showGrid && gridSize > 0 && (
+          <rect
+            x={0}
+            y={0}
+            width={width}
+            height={height}
+            fill={`url(#${GRID})`}
+            pointerEvents="none"
+            data-grid="true"
+          />
+        )}
         <DefsRenderer />
         <g data-artwork-content="true">
           {rootNodeIds.map((id) => (

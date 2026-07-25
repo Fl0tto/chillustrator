@@ -29,6 +29,7 @@ import {
   Spline,
   Magnet,
   Grid2x2,
+  Radius,
 } from "lucide-react";
 import { CanvasStage } from "@/renderer/CanvasStage";
 import { useEditorStore, type ToolId } from "@/store/editorStore";
@@ -38,7 +39,10 @@ import {
   useHistoryFlags,
   useViewport,
   usePreferences,
+  usePathEdit,
 } from "@/store/selectors";
+import { setSelectedCornerRadius } from "@/interactions/pathEditActions";
+import { locateAnchor } from "@/geometry/editablePath";
 import { deleteNodesCommand } from "@/commands/nodeCommands";
 import { groupNodesCommand, ungroupCommand, alignCommand, type AlignEdge } from "@/commands/layerCommands";
 import { importSvg, buildDocumentFromImport } from "@/importExport/importSvg";
@@ -56,6 +60,7 @@ import { SourcePanel } from "./panels/SourcePanel";
 const TOOLS: { id: ToolId; icon: React.ReactNode; title: string; key: string }[] = [
   { id: "select", icon: <MousePointer2 size={18} />, title: "Select", key: "V" },
   { id: "node", icon: <Spline size={18} />, title: "Edit path (direct-selection)", key: "A" },
+  { id: "corner", icon: <Radius size={18} />, title: "Round corners", key: "C" },
   { id: "pen", icon: <PenTool size={18} />, title: "Pen", key: "P" },
   { id: "rect", icon: <Square size={18} />, title: "Rectangle", key: "R" },
   { id: "ellipse", icon: <Circle size={18} />, title: "Ellipse", key: "E" },
@@ -80,6 +85,97 @@ const ALIGN_BUTTONS: { edge: AlignEdge; label: string; title: string }[] = [
   { edge: "vcenter", label: "M", title: "Align middle" },
   { edge: "bottom", label: "B", title: "Align bottom" },
 ];
+
+/** Snapping modes popover: combinable Grid / Alignment / Point toggles + grid size. */
+function SnapMenu() {
+  const prefs = usePreferences();
+  const setPreferences = useEditorStore((s) => s.setPreferences);
+  const [open, setOpen] = useState(false);
+  const anyOn = prefs.snapAlignment || prefs.snapGrid || prefs.snapPoint;
+
+  return (
+    <div style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        className={`btn ${anyOn ? "active" : ""}`}
+        title="Snapping modes"
+        data-testid="toggle-snapping"
+        aria-pressed={anyOn}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Magnet size={16} />
+      </button>
+      {open && (
+        <>
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 40 }}
+            onClick={() => setOpen(false)}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              right: 0,
+              zIndex: 41,
+              minWidth: 190,
+              padding: 10,
+              borderRadius: 8,
+              background: "var(--panel, #23262e)",
+              border: "1px solid var(--border, #3a3f4b)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+            role="menu"
+          >
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={prefs.snapAlignment}
+                onChange={(e) => setPreferences({ snapAlignment: e.target.checked })}
+              />
+              Alignment guides
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={prefs.snapPoint}
+                onChange={(e) => setPreferences({ snapPoint: e.target.checked })}
+              />
+              Point (vertex)
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={prefs.snapGrid}
+                onChange={(e) => setPreferences({ snapGrid: e.target.checked })}
+              />
+              Grid
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 24 }}>
+              <span style={{ opacity: 0.8 }}>Size</span>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                step={1}
+                style={{ width: 64 }}
+                disabled={!prefs.snapGrid}
+                value={prefs.gridSize}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  if (!Number.isNaN(v) && v > 0) setPreferences({ gridSize: v });
+                }}
+              />
+              <span style={{ opacity: 0.6 }}>px</span>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; sourceOpen: boolean }) {
   const { canUndo, canRedo } = useHistoryFlags();
@@ -273,15 +369,7 @@ function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; s
       </div>
 
       <div className="group">
-        <button
-          className={`btn ${prefs.snapEnabled ? "active" : ""}`}
-          title={`Smart Guides: ${prefs.snapEnabled ? "on" : "off"} (Alt bypasses during a drag)`}
-          data-testid="toggle-smart-guides"
-          aria-pressed={prefs.snapEnabled}
-          onClick={() => setPreferences({ snapEnabled: !prefs.snapEnabled })}
-        >
-          <Magnet size={16} />
-        </button>
+        <SnapMenu />
         <button
           className={`btn ${prefs.showCheckerboard ? "active" : ""}`}
           title={`Transparency checkerboard: ${prefs.showCheckerboard ? "on" : "off"}`}
@@ -375,6 +463,47 @@ function BuildBar() {
   );
 }
 
+function CornerBar() {
+  const tool = useTool();
+  const session = usePathEdit();
+  if (tool !== "corner") return null;
+
+  const selCount = session?.selected.length ?? 0;
+  let radius = 0;
+  if (session && selCount > 0) {
+    const loc = locateAnchor(session.path, session.selected[0]);
+    if (loc) radius = session.path.subpaths[loc.sub].anchors[loc.anchor].cornerRadius ?? 0;
+  }
+
+  return (
+    <div className="chill-buildbar">
+      <Radius size={15} />
+      {selCount === 0 ? (
+        <span>Click a shape corner to select it (Shift-click for several). Primitives convert to paths automatically.</span>
+      ) : (
+        <span>Rounding {selCount} corner{selCount === 1 ? "" : "s"} — drag the pink grip or set a radius:</span>
+      )}
+      <span className="spacer" style={{ flex: 1 }} />
+      <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        Radius
+        <input
+          className="input"
+          type="number"
+          min={0}
+          step={1}
+          style={{ width: 72 }}
+          disabled={selCount === 0}
+          value={Math.round(radius * 100) / 100}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            if (!Number.isNaN(v)) setSelectedCornerRadius(Math.max(0, v));
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
 export function EditorShell() {
   const [showSource, setShowSource] = useState(false);
   return (
@@ -384,6 +513,7 @@ export function EditorShell() {
       <div className="chill-canvas">
         <CanvasStage />
         <BuildBar />
+        <CornerBar />
       </div>
       <div className="chill-panels">
         <InspectorPanel />

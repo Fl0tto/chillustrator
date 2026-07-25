@@ -16,13 +16,19 @@
  */
 import { create } from "zustand";
 import { applyPatches, enablePatches, produceWithPatches } from "immer";
-import type { NodeId, SvgDocumentModel, SvgNode } from "@/model/types";
+import type { NodeId, NodeStyle, SvgDocumentModel, SvgNode } from "@/model/types";
 import type { Face } from "@/geometry/adapters/shapeArrangement";
 import type { Point } from "@/geometry/matrix";
 import type { EditablePath } from "@/geometry/editablePath";
 import type { SnapGuide } from "@/interactions/snapping";
 import { createEmptyDocument } from "@/model/document";
-import { loadPreferences, savePreferences } from "@/importExport/persistence";
+import { defaultStyle as makeDefaultStyle } from "@/model/factory";
+import {
+  loadDefaultStyle,
+  loadPreferences,
+  saveDefaultStyle,
+  savePreferences,
+} from "@/importExport/persistence";
 import type { Command } from "@/commands/command";
 import {
   canRedo as histCanRedo,
@@ -43,7 +49,8 @@ export type ToolId =
   | "text"
   | "build"
   | "pen"
-  | "node";
+  | "node"
+  | "corner";
 
 export interface Viewport {
   /** Root-user-units → screen-pixels scale. */
@@ -55,9 +62,15 @@ export interface Viewport {
 
 export interface Preferences {
   showCheckerboard: boolean;
-  snapEnabled: boolean;
+  /** Smart alignment guides (edges/centers of other objects + artboard). */
+  snapAlignment: boolean;
+  /** Snap to the fixed pixel grid (`gridSize`). */
+  snapGrid: boolean;
+  /** Snap the dragged object's nearest vertex to another object's nearest vertex. */
+  snapPoint: boolean;
   /** Numeric precision for SVG export. */
   exportPrecision: number;
+  /** Grid cell size in root units; used by grid render + grid snapping. */
   gridSize: number;
   theme: "dark" | "light";
 }
@@ -126,6 +139,8 @@ export interface EditorStore {
   editingTextId: NodeId | null;
   viewport: Viewport;
   preferences: Preferences;
+  /** "Last used" style seeded into newly created shapes (sticky appearance). */
+  defaultStyle: NodeStyle;
 
   // --- transient ---
   interaction: InteractionState;
@@ -163,6 +178,8 @@ export interface EditorStore {
 
   setViewport: (partial: Partial<Viewport>) => void;
   setPreferences: (partial: Partial<Preferences>) => void;
+  /** Merge into the sticky default style used to seed the next new shape. */
+  setDefaultStyle: (partial: Partial<NodeStyle>) => void;
 
   // --- transient actions ---
   setInteraction: (partial: Partial<InteractionState>) => void;
@@ -183,11 +200,25 @@ const DEFAULT_VIEWPORT: Viewport = { zoom: 1, panX: 0, panY: 0 };
 
 const DEFAULT_PREFERENCES: Preferences = {
   showCheckerboard: true,
-  snapEnabled: true,
+  snapAlignment: true,
+  snapGrid: false,
+  snapPoint: false,
   exportPrecision: 3,
   gridSize: 10,
   theme: "dark",
 };
+
+/** Merge stored prefs over defaults, migrating the legacy `snapEnabled` flag. */
+function initialPreferences(): Preferences {
+  const stored = loadPreferences();
+  const prefs = { ...DEFAULT_PREFERENCES, ...stored } as Preferences & { snapEnabled?: boolean };
+  // Legacy single toggle → alignment mode.
+  if (typeof stored.snapEnabled === "boolean" && stored.snapAlignment === undefined) {
+    prefs.snapAlignment = stored.snapEnabled as boolean;
+  }
+  delete prefs.snapEnabled;
+  return prefs;
+}
 
 const EMPTY_INTERACTION: InteractionState = {
   marquee: null,
@@ -205,7 +236,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   hoveredId: null,
   editingTextId: null,
   viewport: { ...DEFAULT_VIEWPORT },
-  preferences: { ...DEFAULT_PREFERENCES, ...loadPreferences() },
+  preferences: initialPreferences(),
+  defaultStyle: makeDefaultStyle((loadDefaultStyle() ?? {}) as Partial<NodeStyle>),
   interaction: { ...EMPTY_INTERACTION },
   shapeBuilder: null,
   penDraft: null,
@@ -378,6 +410,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const preferences = { ...get().preferences, ...partial };
     set({ preferences });
     savePreferences(preferences);
+  },
+  setDefaultStyle(partial) {
+    const defaultStyle = { ...get().defaultStyle, ...partial };
+    set({ defaultStyle });
+    saveDefaultStyle(defaultStyle);
   },
 
   setInteraction(partial) {

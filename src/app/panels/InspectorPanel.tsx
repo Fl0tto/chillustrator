@@ -69,12 +69,15 @@ function AlphaControl({
   disabled,
   makeCommand,
   coalesceKey,
+  onValue,
 }: {
   label: string;
   value: number | null;
   disabled?: boolean;
   makeCommand: (opacity: number) => Command;
   coalesceKey: string;
+  /** Called with the committed 0..1 opacity so callers can mirror it elsewhere (e.g. sticky style). */
+  onValue?: (opacity: number) => void;
 }) {
   const applyCoalesced = useEditorStore((s) => s.applyCoalesced);
   const apply = useEditorStore((s) => s.apply);
@@ -98,6 +101,7 @@ function AlphaControl({
           const o = Number(e.target.value) / 100;
           const key = dragKey.current ?? `${coalesceKey}:${dragKeySeq++}`;
           applyCoalesced(makeCommand(o), key);
+          onValue?.(o);
         }}
         style={{ flex: 1 }}
       />
@@ -112,7 +116,11 @@ function AlphaControl({
         value={pct}
         onChange={(e) => {
           const v = parseFloat(e.target.value);
-          if (!Number.isNaN(v)) apply(makeCommand(Math.max(0, Math.min(1, v / 100))));
+          if (!Number.isNaN(v)) {
+            const o = Math.max(0, Math.min(1, v / 100));
+            apply(makeCommand(o));
+            onValue?.(o);
+          }
         }}
       />
     </div>
@@ -272,6 +280,7 @@ function common<T>(values: T[]): T | null {
 export function InspectorPanel() {
   const nodes = useSelectedNodes();
   const apply = useEditorStore((s) => s.apply);
+  const setDefaultStyle = useEditorStore((s) => s.setDefaultStyle);
   const pathEdit = usePathEdit();
 
   if (nodes.length === 0 && !pathEdit) {
@@ -312,13 +321,24 @@ export function InspectorPanel() {
       {primary && (
         <div className="panel-section">
           <h3 className="panel-title">Fill</h3>
-          <PaintEditor label="Fill" paint={primary.style.fill} onChange={(p) => apply(setFillCommand(ids, p))} />
+          <PaintEditor
+            label="Fill"
+            paint={primary.style.fill}
+            onChange={(p) => {
+              apply(setFillCommand(ids, p));
+              setDefaultStyle({ fill: p });
+            }}
+          />
           <AlphaControl
             label="Fill α"
             value={fillOpacity}
             disabled={withFill.length === 0}
             makeCommand={(o) => setFillOpacityCommand(ids, o)}
             coalesceKey={`fill-opacity:${ids.join(",")}`}
+            onValue={(o) => {
+              const fill = useEditorStore.getState().defaultStyle.fill;
+              if (fill) setDefaultStyle({ fill: { ...fill, opacity: o } });
+            }}
           />
         </div>
       )}
@@ -326,12 +346,22 @@ export function InspectorPanel() {
       {primary && (
         <div className="panel-section">
           <h3 className="panel-title">Stroke</h3>
-          <PaintEditor label="Color" paint={primary.style.stroke} onChange={(p) => apply(setStrokeCommand(ids, p))} />
+          <PaintEditor
+            label="Color"
+            paint={primary.style.stroke}
+            onChange={(p) => {
+              apply(setStrokeCommand(ids, p));
+              setDefaultStyle({ stroke: p });
+            }}
+          />
           <NumberField
             label="Width"
             value={primary.style.strokeWidth}
             step={0.5}
-            onCommit={(v) => apply(setStrokeWidthCommand(ids, v))}
+            onCommit={(v) => {
+              apply(setStrokeWidthCommand(ids, v));
+              setDefaultStyle({ strokeWidth: v });
+            }}
           />
           <AlphaControl
             label="Stroke α"
@@ -339,6 +369,10 @@ export function InspectorPanel() {
             disabled={withStroke.length === 0}
             makeCommand={(o) => setStrokeOpacityCommand(ids, o)}
             coalesceKey={`stroke-opacity:${ids.join(",")}`}
+            onValue={(o) => {
+              const stroke = useEditorStore.getState().defaultStyle.stroke;
+              if (stroke) setDefaultStyle({ stroke: { ...stroke, opacity: o } });
+            }}
           />
         </div>
       )}
