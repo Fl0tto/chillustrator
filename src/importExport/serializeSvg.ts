@@ -18,13 +18,12 @@ import { isIdentity } from "@/geometry/matrix";
 import {
   hasGeometryWarp,
   hasTextArcWarp,
+  textArcCenter,
   textArcPathD,
   textWarpArcId,
   warpedPathD,
 } from "@/geometry/warpResolve";
 import { buildFilterMarkup, filterId, hasEffects } from "@/geometry/filters";
-
-const TEXT_ADVANCE_FACTOR = 0.6;
 
 export interface SerializeOptions {
   /** Decimal precision for numeric attributes (P-005). Default 3. */
@@ -378,8 +377,8 @@ export function serializeSvg(doc: SvgDocumentModel, options: SerializeOptions = 
     for (const paint of paints) writePaint(paint, o, w, 2);
     for (const n of arcTexts) {
       if (n.type !== "text" || n.warp?.type !== "arc") continue;
-      const width = Math.max(1, n.text.length * n.fontSize * TEXT_ADVANCE_FACTOR);
-      const d = textArcPathD(n.warp, n.x, n.y, width, o.precision);
+      const apex = textArcCenter(n);
+      const d = textArcPathD(n.warp, apex.x, apex.y, o.precision);
       w.push(2, `<path id="${textWarpArcId(n.id)}" d="${escapeAttr(d)}" fill="none" />`);
     }
     for (const n of filtered) {

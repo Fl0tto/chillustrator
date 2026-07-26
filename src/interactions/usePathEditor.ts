@@ -202,24 +202,38 @@ export function usePathEditor(
       setWorldFor(s.nodeId);
       candidates = null;
 
-      // Corner tool: a click on the shape body (not a grip) selects the nearest
-      // corner so the radius grip / Corner-R field targets it — no need to hit the
-      // tiny anchor dot exactly.
-      if (cornerTool && !anchorAttr && !handleAttr && !radiusAttr) {
-        const rootPt = toRoot(e.clientX, e.clientY);
-        const threshold = CORNER_PICK_PX / store.getState().viewport.zoom;
-        const near = nearestAnchorFlatIndex(s.path, world, rootPt, threshold);
-        if (near >= 0) {
-          const already = s.selected.includes(near);
+      // Corner tool: pressing on (or near) a corner selects it AND begins a
+      // radius drag directly — dragging the corner rounds it (Live-Corners feel),
+      // instead of moving the anchor. The nearest-corner pick means you don't have
+      // to hit the tiny grip exactly. Node-tool anchor/handle editing is untouched.
+      if (cornerTool && !handleAttr) {
+        let cornerIdx = -1;
+        if (radiusAttr) cornerIdx = Number(radiusAttr.getAttribute("data-pen-radius"));
+        else if (anchorAttr) cornerIdx = Number(anchorAttr.getAttribute("data-pen-anchor"));
+        else {
+          const rootPt = toRoot(e.clientX, e.clientY);
+          const threshold = CORNER_PICK_PX / store.getState().viewport.zoom;
+          cornerIdx = nearestAnchorFlatIndex(s.path, world, rootPt, threshold);
+        }
+        if (cornerIdx >= 0) {
+          const already = s.selected.includes(cornerIdx);
           const selected = e.shiftKey
             ? already
-              ? s.selected.filter((i) => i !== near)
-              : [...s.selected, near]
-            : [near];
+              ? s.selected.filter((i) => i !== cornerIdx)
+              : [...s.selected, cornerIdx]
+            : [cornerIdx];
           store.getState().setPathEdit({ ...s, selected });
-        } else if (!e.shiftKey) {
-          store.getState().setPathEdit({ ...s, selected: [] });
+          // Begin a radius drag on the primary corner.
+          host.setPointerCapture(e.pointerId);
+          pointerId = e.pointerId;
+          startLocal = clonePath(s.path);
+          drag = "radius";
+          dragAnchor = cornerIdx;
+          const loc = locateAnchor(s.path, cornerIdx);
+          radiusBase = loc ? anchorPoint(s.path.subpaths[loc.sub].anchors[loc.anchor]) : null;
+          return;
         }
+        if (!e.shiftKey) store.getState().setPathEdit({ ...s, selected: [] });
         drag = "none";
         return;
       }

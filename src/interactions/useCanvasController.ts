@@ -292,9 +292,11 @@ export function useCanvasController(
         if (state.tool === "text") {
           const node = createText({ x: root.x, y: root.y, text: "Text" });
           store.getState().apply(addNodeCommand(node, null, undefined, "Add text"));
+          // setTool clears editingTextId, so switch tools FIRST, then open the
+          // inline editor for the new text.
+          store.getState().setTool("select");
           store.getState().setSelection([node.id]);
           store.getState().setEditingText(node.id);
-          store.getState().setTool("select");
           gesture = idle();
           return;
         }
@@ -562,6 +564,19 @@ export function useCanvasController(
       endGesture();
     };
 
+    // ---- double-click to edit text ------------------------------------------
+    const onDoubleClick = (e: MouseEvent) => {
+      if (store.getState().tool !== "select") return;
+      const el = (e.target as Element | null)?.closest?.("[data-node-id]");
+      const id = el?.getAttribute("data-node-id");
+      if (!id) return;
+      const node = store.getState().document.nodes[id];
+      if (node?.type === "text") {
+        store.getState().setSelection([id]);
+        store.getState().setEditingText(id);
+      }
+    };
+
     // ---- wheel zoom ---------------------------------------------------------
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -698,6 +713,7 @@ export function useCanvasController(
     host.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    host.addEventListener("dblclick", onDoubleClick);
     host.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -706,6 +722,7 @@ export function useCanvasController(
       host.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      host.removeEventListener("dblclick", onDoubleClick);
       host.removeEventListener("wheel", onWheel);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);

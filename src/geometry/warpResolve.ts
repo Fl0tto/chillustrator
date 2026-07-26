@@ -62,45 +62,73 @@ export function warpedPathD(node: SvgNode, precision = 4): string | null {
   return serializePath(warped, precision);
 }
 
+/** Rough glyph advance as a fraction of font size (matches nodeGeometry). */
+const TEXT_ADVANCE_FACTOR = 0.6;
+
+/** Approximate rendered width of a text node's string. */
+export function estimateTextWidth(node: Extract<SvgNode, { type: "text" }>): number {
+  return Math.max(1, node.text.length * node.fontSize * TEXT_ADVANCE_FACTOR);
+}
+
 /**
- * Baseline arc `d` for text `<textPath>` warp. The text rides the top of a circle
- * of the given radius; `direction` chooses which side of the circle and the sweep
- * so the text reads correctly. Centered on (cx, cy) — the text node's local origin.
+ * The "apex" point where arc-warped text should be centred: the text's actual
+ * visual centre, adjusted for its text-anchor, so the curved text sits where the
+ * flat text was rather than shifting to the left edge.
+ */
+export function textArcCenter(node: Extract<SvgNode, { type: "text" }>): { x: number; y: number } {
+  const w = estimateTextWidth(node);
+  const anchorAdj = node.textAnchor === "start" ? w / 2 : node.textAnchor === "end" ? -w / 2 : 0;
+  const arc = node.warp?.type === "arc" ? node.warp : null;
+  const horizontal = !arc || arc.direction === "top" || arc.direction === "bottom";
+  // Top/bottom curves keep the baseline at node.y; left/right use the visual mid.
+  return {
+    x: node.x + anchorAdj,
+    y: horizontal ? node.y : node.y - node.fontSize * 0.35,
+  };
+}
+
+/**
+ * Baseline `d` for text `<textPath>` warp: a FULL circle of `spec.radius` built
+ * from two 180° arcs, positioned so its path-midpoint (50%) is the apex on the
+ * chosen side. The renderer/serializer place the text with `text-anchor="middle"`
+ * + `startOffset="50%"`, so the text centres on the apex (`apexX`, `apexY`) and
+ * wraps both ways along the circle — nothing is ever clipped, half-circle through
+ * full-circle wraps work, and small radii are safe (no degenerate single arc).
+ * `sweep` per direction keeps glyphs upright on that side.
  */
 export function textArcPathD(
   spec: Extract<WarpSpec, { type: "arc" }>,
-  cx: number,
-  cy: number,
-  width: number,
+  apexX: number,
+  apexY: number,
   precision = 4,
 ): string {
-  const radius = Math.max(1, spec.radius);
-  // Arc length ≈ text width → half-angle so the text spans the centred arc.
-  const half = Math.min(Math.PI * 0.98, width / (2 * radius));
+  const r = Math.max(1, spec.radius);
   const p = (n: number) => {
     const v = Number(n.toFixed(precision));
     return Object.is(v, -0) ? "0" : String(v);
   };
 
-  // Build an arc centred so its midpoint sits at (cx, cy), curving per direction.
-  // `sweep` flips for bottom/left so glyphs sit upright on that side.
-  const horizontal = spec.direction === "top" || spec.direction === "bottom";
-  const sweepUp = spec.direction === "top" || spec.direction === "right";
-
-  let start: { x: number; y: number };
-  let end: { x: number; y: number };
-  if (horizontal) {
-    const cyc = sweepUp ? cy + radius : cy - radius; // circle centre
-    const sign = sweepUp ? -1 : 1;
-    start = { x: cx - radius * Math.sin(half), y: cyc + sign * radius * Math.cos(half) };
-    end = { x: cx + radius * Math.sin(half), y: cyc + sign * radius * Math.cos(half) };
-  } else {
-    const cxc = sweepUp ? cx - radius : cx + radius;
-    const sign = sweepUp ? 1 : -1;
-    start = { x: cxc + sign * radius * Math.cos(half), y: cy - radius * Math.sin(half) };
-    end = { x: cxc + sign * radius * Math.cos(half), y: cy + radius * Math.sin(half) };
+  // Circle centre relative to the apex, plus the diametrically-opposite start
+  // point and the sweep that makes text read correctly on that side.
+  let cx: number;
+  let cy: number;
+  let sweep: 0 | 1;
+  switch (spec.direction) {
+    case "top": // apex at top, centre below, clockwise
+      cx = apexX; cy = apexY + r; sweep = 1; break;
+    case "bottom": // apex at bottom, centre above, counter-clockwise
+      cx = apexX; cy = apexY - r; sweep = 0; break;
+    case "right": // apex at right, centre left, clockwise
+      cx = apexX - r; cy = apexY; sweep = 1; break;
+    default: // "left": apex at left, centre right, counter-clockwise
+      cx = apexX + r; cy = apexY; sweep = 0; break;
   }
-  const largeArc = 0;
-  const sweepFlag = sweepUp ? 1 : 0;
-  return `M${p(start.x)} ${p(start.y)} A${p(radius)} ${p(radius)} 0 ${largeArc} ${sweepFlag} ${p(end.x)} ${p(end.y)}`;
+  // Start = point opposite the apex through the centre; mid = apex.
+  const startX = 2 * cx - apexX;
+  const startY = 2 * cy - apexY;
+  return (
+    `M${p(startX)} ${p(startY)} ` +
+    `A${p(r)} ${p(r)} 0 1 ${sweep} ${p(apexX)} ${p(apexY)} ` +
+    `A${p(r)} ${p(r)} 0 1 ${sweep} ${p(startX)} ${p(startY)}`
+  );
 }

@@ -8,7 +8,7 @@ import { createEmptyDocument } from "@/model/document";
 import { createRect, createImage, createText } from "@/model/factory";
 import { serializeSvg } from "@/importExport/serializeSvg";
 import { applyWarp } from "@/geometry/warp";
-import { warpedPathD } from "@/geometry/warpResolve";
+import { warpedPathD, textArcPathD, textArcCenter } from "@/geometry/warpResolve";
 import { buildFilterMarkup, filterId } from "@/geometry/filters";
 import { rectToGeometry } from "@/geometry/pathConvert";
 import { geometryBounds } from "@/geometry/pathData";
@@ -98,6 +98,34 @@ describe("warp serialization", () => {
     // Warped text rides a textPath referencing a generated arc def.
     expect(out).toContain("<textPath");
     expect(out).toMatch(/<path id="warp-/);
+  });
+});
+
+describe("text arc baseline (circular)", () => {
+  it("emits a full-circle two-arc baseline and is finite at small radius", () => {
+    const d = textArcPathD({ type: "arc", direction: "top", radius: 3, amount: 1 }, 100, 100);
+    expect(d.match(/A/g)?.length).toBe(2); // two 180° arcs → full circle
+    expect(d).not.toMatch(/NaN|Infinity/);
+  });
+
+  it("centres the apex on the text's visual centre (shifts with text-anchor)", () => {
+    const t = createText({ x: 100, y: 50, text: "ABCDEF" });
+    t.warp = { type: "arc", direction: "top", radius: 120, amount: 1 };
+    // Default anchor "start": apex shifts right by ~half the text width.
+    const start = textArcCenter(t);
+    expect(start.x).toBeGreaterThan(100);
+    expect(start.y).toBe(50);
+    // "middle" anchor: apex stays at the node origin x.
+    t.textAnchor = "middle";
+    expect(textArcCenter(t).x).toBe(100);
+  });
+
+  it("uses opposite sweep for bottom vs top so glyphs stay upright", () => {
+    const top = textArcPathD({ type: "arc", direction: "top", radius: 100, amount: 1 }, 0, 0);
+    const bottom = textArcPathD({ type: "arc", direction: "bottom", radius: 100, amount: 1 }, 0, 0);
+    // Sweep flag is the 5th arc parameter; top uses 1, bottom uses 0.
+    expect(top).toMatch(/A100 100 0 1 1/);
+    expect(bottom).toMatch(/A100 100 0 1 0/);
   });
 });
 

@@ -25,7 +25,7 @@ function NodeChildren({ ids }: { ids: string[] }) {
   );
 }
 
-function renderNode(node: SvgNode) {
+function renderNode(node: SvgNode, editing = false) {
   if (!node.visible) return null;
   const base = baseNodeProps(node);
   const style = styleToProps(node.style);
@@ -75,6 +75,8 @@ function renderNode(node: SvgNode) {
         fontWeight: node.fontWeight,
         fontStyle: node.fontStyle,
         letterSpacing: node.letterSpacing || undefined,
+        // Hide glyphs while the inline editor is open so nothing doubles.
+        visibility: editing ? ("hidden" as const) : undefined,
         style: { whiteSpace: "pre" as const, ...style.style },
       };
       // Arc-warped text rides a generated <textPath> and stays editable text.
@@ -123,8 +125,9 @@ function renderNode(node: SvgNode) {
 
 export const SvgNodeRenderer = memo(function SvgNodeRenderer({ nodeId }: NodeProps) {
   const node = useEditorStore((s) => s.document.nodes[nodeId]);
+  const editing = useEditorStore((s) => s.editingTextId === nodeId);
   if (!node) return null;
-  return renderNode(node);
+  return renderNode(node, editing);
 });
 
 /** Render a node object not backed by the store (e.g. a live creation preview). */

@@ -10,10 +10,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { PaintDefinition, SvgNode } from "@/model/types";
 import { toSvgTransform } from "@/geometry/matrix";
 import { buildFilterMarkup, hasEffects } from "@/geometry/filters";
-import { hasTextArcWarp, textArcPathD, textWarpArcId } from "@/geometry/warpResolve";
-
-/** Rough glyph advance (matches nodeGeometry) for sizing the text arc span. */
-const TEXT_ADVANCE_FACTOR = 0.6;
+import { hasTextArcWarp, textArcCenter, textArcPathD, textWarpArcId } from "@/geometry/warpResolve";
 
 function renderPaint(paint: PaintDefinition) {
   const stops = paint.stops.map((s, i) => (
@@ -59,8 +56,8 @@ function renderPaint(paint: PaintDefinition) {
 /** Text-arc baseline path def for one arc-warped text node. */
 function renderTextArc(node: Extract<SvgNode, { type: "text" }>) {
   if (node.warp?.type !== "arc") return null;
-  const width = Math.max(1, node.text.length * node.fontSize * TEXT_ADVANCE_FACTOR);
-  const d = textArcPathD(node.warp, node.x, node.y, width);
+  const apex = textArcCenter(node);
+  const d = textArcPathD(node.warp, apex.x, apex.y);
   return <path key={textWarpArcId(node.id)} id={textWarpArcId(node.id)} d={d} fill="none" />;
 }
 

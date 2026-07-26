@@ -12,6 +12,7 @@ import { ShapeBuilderOverlay } from "./ShapeBuilderOverlay";
 import { GuidesOverlay } from "./GuidesOverlay";
 import { PenOverlay } from "./PenOverlay";
 import { PathEditOverlay } from "./PathEditOverlay";
+import { TextEditOverlay } from "./TextEditOverlay";
 import { useCanvasController } from "@/interactions/useCanvasController";
 import { useHoverController } from "@/interactions/useHoverController";
 import { useShapeBuilder } from "@/interactions/useShapeBuilder";
@@ -48,6 +49,7 @@ export function CanvasStage() {
       <PenOverlay />
       <PathEditOverlay />
       <ShapeBuilderOverlay />
+      <TextEditOverlay />
     </div>
   );
 }
