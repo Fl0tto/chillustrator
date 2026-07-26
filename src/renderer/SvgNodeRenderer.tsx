@@ -9,6 +9,7 @@ import { memo } from "react";
 import { useEditorStore } from "@/store/editorStore";
 import type { SvgNode } from "@/model/types";
 import { baseNodeProps, styleToProps } from "./renderAttributes";
+import { hasGeometryWarp, hasTextArcWarp, textWarpArcId, warpedPathD } from "@/geometry/warpResolve";
 
 interface NodeProps {
   nodeId: string;
@@ -28,6 +29,12 @@ function renderNode(node: SvgNode) {
   if (!node.visible) return null;
   const base = baseNodeProps(node);
   const style = styleToProps(node.style);
+
+  // Non-destructive geometry warp: render shapes/paths as a deformed <path>.
+  if (hasGeometryWarp(node)) {
+    const d = warpedPathD(node);
+    if (d) return <path {...base} {...style} d={d} />;
+  }
 
   switch (node.type) {
     case "rect":
@@ -59,24 +66,33 @@ function renderNode(node: SvgNode) {
     }
     case "path":
       return <path {...base} {...style} d={node.d} />;
-    case "text":
+    case "text": {
+      const textProps = {
+        ...base,
+        ...style,
+        fontFamily: node.fontFamily,
+        fontSize: node.fontSize,
+        fontWeight: node.fontWeight,
+        fontStyle: node.fontStyle,
+        letterSpacing: node.letterSpacing || undefined,
+        style: { whiteSpace: "pre" as const, ...style.style },
+      };
+      // Arc-warped text rides a generated <textPath> and stays editable text.
+      if (hasTextArcWarp(node)) {
+        return (
+          <text {...textProps} textAnchor="middle">
+            <textPath href={`#${textWarpArcId(node.id)}`} startOffset="50%">
+              {node.text}
+            </textPath>
+          </text>
+        );
+      }
       return (
-        <text
-          {...base}
-          {...style}
-          x={node.x}
-          y={node.y}
-          fontFamily={node.fontFamily}
-          fontSize={node.fontSize}
-          fontWeight={node.fontWeight}
-          fontStyle={node.fontStyle}
-          letterSpacing={node.letterSpacing || undefined}
-          textAnchor={node.textAnchor}
-          style={{ whiteSpace: "pre", ...style.style }}
-        >
+        <text {...textProps} x={node.x} y={node.y} textAnchor={node.textAnchor}>
           {node.text}
         </text>
       );
+    }
     case "image":
       return (
         <image

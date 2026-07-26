@@ -15,6 +15,16 @@ import type {
   SvgNode,
 } from "@/model/types";
 import { isIdentity } from "@/geometry/matrix";
+import {
+  hasGeometryWarp,
+  hasTextArcWarp,
+  textArcPathD,
+  textWarpArcId,
+  warpedPathD,
+} from "@/geometry/warpResolve";
+import { buildFilterMarkup, filterId, hasEffects } from "@/geometry/filters";
+
+const TEXT_ADVANCE_FACTOR = 0.6;
 
 export interface SerializeOptions {
   /** Decimal precision for numeric attributes (P-005). Default 3. */
@@ -114,6 +124,7 @@ function baseAttrs(node: SvgNode, o: Resolved): Attr[] {
   const t = matrixAttr(node.transform, o.precision);
   if (t) attrs.push(t);
   if (node.opacity !== 1) attrs.push(["opacity", fmt(node.opacity, 4)]);
+  if (hasEffects(node)) attrs.push(["filter", `url(#${filterId(node.id)})`]);
   if (!node.visible && o.includeHidden) attrs.push(["display", "none"]);
   return attrs;
 }
@@ -217,6 +228,32 @@ function writeNode(
   depth: number,
 ): void {
   if (!node.visible && !o.includeHidden) return;
+  // Reference images are editing aids only — never exported (EXP-001).
+  if (node.type === "image" && node.reference) return;
+
+  // Non-destructive geometry warp: emit a deformed <path> in place of the shape.
+  if (hasGeometryWarp(node)) {
+    const d = warpedPathD(node, o.precision);
+    if (d) {
+      const wattrs: Attr[] = [...baseAttrs(node, o), ...styleAttrs(node.style, o.precision), ["d", d], ...extraAttrs(node)];
+      w.push(depth, `<path${attrString(wattrs)} />`);
+      return;
+    }
+  }
+
+  // Arc-warped text rides a generated <textPath> (see defs).
+  if (hasTextArcWarp(node) && node.type === "text") {
+    const tattrs = nodeAttrs(node, o).filter(([n]) => n !== "x" && n !== "y" && n !== "text-anchor");
+    tattrs.push(["text-anchor", "middle"]);
+    w.push(depth, `<text${attrString(tattrs)}>`);
+    w.push(
+      depth + 1,
+      `<textPath href="#${textWarpArcId(node.id)}" startOffset="50%">${escapeText(node.text)}</textPath>`,
+    );
+    w.push(depth, `</text>`);
+    return;
+  }
+
   const tag = tagFor(node);
   const attrs = nodeAttrs(node, o);
 
@@ -327,9 +364,28 @@ export function serializeSvg(doc: SvgDocumentModel, options: SerializeOptions = 
 
   const usedPaints = collectReferencedPaintIds(doc, o.includeHidden);
   const paints = Object.values(doc.paints).filter((p) => usedPaints.has(p.id));
-  if (paints.length > 0) {
+
+  // Extra defs: arc baselines for warped text + drop-shadow filters. Skip
+  // reference images (never exported) and hidden nodes when omitted.
+  const allNodes = Object.values(doc.nodes).filter(
+    (n) => (n.visible || o.includeHidden) && !(n.type === "image" && n.reference),
+  );
+  const arcTexts = allNodes.filter(hasTextArcWarp);
+  const filtered = allNodes.filter(hasEffects);
+
+  if (paints.length > 0 || arcTexts.length > 0 || filtered.length > 0) {
     w.push(1, `<defs>`);
     for (const paint of paints) writePaint(paint, o, w, 2);
+    for (const n of arcTexts) {
+      if (n.type !== "text" || n.warp?.type !== "arc") continue;
+      const width = Math.max(1, n.text.length * n.fontSize * TEXT_ADVANCE_FACTOR);
+      const d = textArcPathD(n.warp, n.x, n.y, width, o.precision);
+      w.push(2, `<path id="${textWarpArcId(n.id)}" d="${escapeAttr(d)}" fill="none" />`);
+    }
+    for (const n of filtered) {
+      const markup = buildFilterMarkup(n);
+      if (markup) w.push(2, markup);
+    }
     w.push(1, `</defs>`);
   }
 

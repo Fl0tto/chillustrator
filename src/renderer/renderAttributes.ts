@@ -5,6 +5,7 @@
 import type { CSSProperties } from "react";
 import type { NodeStyle, PaintReference, SvgNode } from "@/model/types";
 import { toSvgTransform } from "@/geometry/matrix";
+import { filterId, hasEffects } from "@/geometry/filters";
 
 export function resolvePaint(paint: PaintReference | null): string {
   if (!paint) return "none";
@@ -58,6 +59,8 @@ export function baseNodeProps(node: SvgNode) {
     "data-node-type": node.type,
     transform: toSvgTransform(node.transform),
     opacity: node.opacity === 1 ? undefined : node.opacity,
+    // Non-destructive drop shadows are applied via a generated <filter> def.
+    filter: hasEffects(node) ? `url(#${filterId(node.id)})` : undefined,
     // Hit-area is decoupled from paint: the interior stays clickable even when
     // fill is "none" (default for new shapes). Overlays/artboard stay
     // pointer-events:none; the live preview is inert via pointer capture.

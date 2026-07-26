@@ -30,6 +30,54 @@ export type StrokeLinejoin = "miter" | "round" | "bevel";
 export type FillRule = "nonzero" | "evenodd";
 
 /**
+ * A non-destructive warp modifier stored on a node. The original geometry is
+ * preserved; the renderer/serializer re-evaluate the deformed output on demand,
+ * so a warp stays fully re-editable (and removable). See geometry/warp.ts.
+ */
+export type WarpSpec =
+  | {
+      type: "arc";
+      /** Which edge bends outward / which side the bend curves toward. */
+      direction: "top" | "bottom" | "left" | "right";
+      /** Approximated circle radius in local units. Larger = flatter. */
+      radius: number;
+      /** How fully to reach the circle: 0 = original, 1 = fully wrapped. */
+      amount: number;
+    }
+  | {
+      type: "wave";
+      /** Axis the wave travels along. */
+      axis: "horizontal" | "vertical";
+      /** Peak displacement in local units. */
+      amplitude: number;
+      /** Number of full sine cycles across the geometry's extent. */
+      frequency: number;
+      /** Phase offset in radians (shifts the wave's starting point). */
+      phase: number;
+      /** Displacement sign (±1) — flips crest/trough direction. */
+      direction: 1 | -1;
+    };
+
+/**
+ * A non-destructive drop-shadow effect. `outer` casts a shadow behind the shape;
+ * `inner` insets a shadow within it (3-D-ish depth). Multiple effects stack.
+ * Rendered/serialized as an SVG `<filter>` (see geometry/filters.ts).
+ */
+export interface ShadowEffect {
+  id: string;
+  kind: "outer" | "inner";
+  dx: number;
+  dy: number;
+  /** Gaussian blur standard deviation (0 = crisp). */
+  blur: number;
+  /** Dilate (outer) / erode (inner) the shadow before blurring. */
+  spread?: number;
+  color: string;
+  opacity: number;
+  enabled: boolean;
+}
+
+/**
  * A paint reference on a node's style.
  *  - kind "solid": `value` is a hex/named CSS color ("#rrggbb", "black", …).
  *  - kind "definition": `value` is a PaintId referring to document.paints
@@ -66,6 +114,10 @@ export interface BaseNode {
   parentId: NodeId | null;
   style: NodeStyle;
   extraAttributes?: Record<string, string>;
+  /** Non-destructive warp modifier (arc bend / sine wave). */
+  warp?: WarpSpec;
+  /** Non-destructive drop-shadow effects (outer / inner). */
+  effects?: ShadowEffect[];
 }
 
 export interface RectNode extends BaseNode {
@@ -129,6 +181,11 @@ export interface ImageNode extends BaseNode {
   width: number;
   height: number;
   href: string;
+  /**
+   * Reference images are editing aids (tracing/placement guides): visible and
+   * transformable on-canvas but excluded from every SVG export (EXP-001).
+   */
+  reference?: boolean;
 }
 
 export interface GroupNode extends BaseNode {

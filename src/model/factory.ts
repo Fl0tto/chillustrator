@@ -7,6 +7,7 @@ import { createNodeId } from "./ids";
 import type {
   EllipseNode,
   GroupNode,
+  ImageNode,
   LineNode,
   Matrix2D,
   NodeStyle,
@@ -141,6 +142,30 @@ export function createPath(init: BaseInit & { d: string }): PathNode {
     ...base(init, "Path"),
     type: "path",
     d: init.d,
+  };
+}
+
+export function createImage(
+  init: BaseInit & {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    href: string;
+    reference?: boolean;
+  },
+): ImageNode {
+  return {
+    ...base(init, init.reference ? "Reference" : "Image"),
+    type: "image",
+    // Images carry no paint; keep an inert style so shared helpers stay happy.
+    style: defaultStyle({ fill: null, stroke: null }),
+    x: init.x,
+    y: init.y,
+    width: init.width,
+    height: init.height,
+    href: init.href,
+    reference: init.reference,
   };
 }
 

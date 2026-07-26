@@ -30,6 +30,9 @@ import {
   Magnet,
   Grid2x2,
   Radius,
+  Image as ImageIcon,
+  Rainbow,
+  Waves,
 } from "lucide-react";
 import { CanvasStage } from "@/renderer/CanvasStage";
 import { useEditorStore, type ToolId } from "@/store/editorStore";
@@ -43,7 +46,10 @@ import {
 } from "@/store/selectors";
 import { setSelectedCornerRadius } from "@/interactions/pathEditActions";
 import { locateAnchor } from "@/geometry/editablePath";
-import { deleteNodesCommand } from "@/commands/nodeCommands";
+import { addNodeCommand, deleteNodesCommand } from "@/commands/nodeCommands";
+import { setWarpCommand, defaultWarp } from "@/commands/warpCommands";
+import { isGeometryWarpable } from "@/geometry/warpResolve";
+import { createImage } from "@/model/factory";
 import { groupNodesCommand, ungroupCommand, alignCommand, type AlignEdge } from "@/commands/layerCommands";
 import { importSvg, buildDocumentFromImport } from "@/importExport/importSvg";
 import { serializeSvg } from "@/importExport/serializeSvg";
@@ -188,6 +194,7 @@ function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; s
   const clearSelection = useEditorStore((s) => s.clearSelection);
   const setPreferences = useEditorStore((s) => s.setPreferences);
   const fileInput = useRef<HTMLInputElement>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [busy, setBusy] = useState(false);
@@ -240,6 +247,39 @@ function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; s
     const doc = useEditorStore.getState().document;
     const svg = serializeSvg(doc, { precision: prefs.exportPrecision, pretty: true });
     downloadText(svg, svgFilename(doc.name));
+  };
+
+  const onPlaceImage = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const href = String(reader.result);
+      const probe = new window.Image();
+      probe.onload = () => {
+        const doc = useEditorStore.getState().document;
+        const natW = probe.naturalWidth || 200;
+        const natH = probe.naturalHeight || 200;
+        // Fit within 90% of the artboard, preserving aspect ratio.
+        const maxW = doc.width * 0.9;
+        const maxH = doc.height * 0.9;
+        const scale = Math.min(1, maxW / natW, maxH / natH);
+        const w = natW * scale;
+        const h = natH * scale;
+        const node = createImage({
+          x: 0,
+          y: 0,
+          width: w,
+          height: h,
+          href,
+          reference: true,
+          transform: { a: 1, b: 0, c: 0, d: 1, e: (doc.width - w) / 2, f: (doc.height - h) / 2 },
+        });
+        useEditorStore.getState().apply(addNodeCommand(node, null, undefined, "Place reference image"));
+        useEditorStore.getState().setSelection([node.id]);
+        useEditorStore.getState().setTool("select");
+      };
+      probe.src = href;
+    };
+    reader.readAsDataURL(file);
   };
 
   const hasSel = selection.length > 0;
@@ -356,6 +396,24 @@ function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; s
         <button className="btn" title="Import SVG" onClick={() => fileInput.current?.click()}>
           <Upload size={16} />
         </button>
+        <input
+          ref={imageInput}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onPlaceImage(file);
+            e.target.value = "";
+          }}
+        />
+        <button
+          className="btn"
+          title="Place reference image (excluded from export)"
+          onClick={() => imageInput.current?.click()}
+        >
+          <ImageIcon size={16} />
+        </button>
         <button className="btn" title="Export SVG" onClick={onExport}>
           <Download size={16} />
         </button>
@@ -394,7 +452,19 @@ function Toolbar({ onToggleSource, sourceOpen }: { onToggleSource: () => void; s
 
 function ToolRail() {
   const tool = useTool();
+  const selection = useSelection();
   const setTool = useEditorStore((s) => s.setTool);
+  const apply = useEditorStore((s) => s.apply);
+
+  const single = selection.length === 1 ? useEditorStore.getState().document.nodes[selection[0]] : undefined;
+  const canArc = single ? isGeometryWarpable(single) || single.type === "text" : false;
+  const canWave = single ? isGeometryWarpable(single) : false;
+
+  const applyWarp = (type: "arc" | "wave") => {
+    if (!single) return;
+    apply(setWarpCommand([single.id], defaultWarp(type)));
+  };
+
   return (
     <div className="chill-rail">
       {TOOLS.map((t) => (
@@ -407,6 +477,23 @@ function ToolRail() {
           {t.icon}
         </button>
       ))}
+      <div style={{ height: 1, alignSelf: "stretch", margin: "4px 6px", background: "var(--border, #3a3f4b)" }} />
+      <button
+        className="btn tool"
+        title="Arc warp — bend the selected element toward a circle"
+        disabled={!canArc}
+        onClick={() => applyWarp("arc")}
+      >
+        <Rainbow size={18} />
+      </button>
+      <button
+        className="btn tool"
+        title="Wave warp — sine/wobble the selected shape or path"
+        disabled={!canWave}
+        onClick={() => applyWarp("wave")}
+      >
+        <Waves size={18} />
+      </button>
     </div>
   );
 }

@@ -39,6 +39,11 @@ export function createDocumentId(): string {
   return createId("doc");
 }
 
+/** Id for a single drop-shadow effect entry on a node. */
+export function createEffectId(): string {
+  return createId("fx");
+}
+
 /** Sanitize a user- or import-supplied id into a valid, unique SVG id. */
 export function ensureUniqueId(candidate: string, taken: Set<string>): string {
   const base = candidate.replace(/[^A-Za-z0-9_-]/g, "-").replace(/^-+/, "") || "id";
