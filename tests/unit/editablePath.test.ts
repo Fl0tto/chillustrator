@@ -124,4 +124,56 @@ describe("corner radius clamping", () => {
     expect(b.minX).toBeGreaterThanOrEqual(-0.001);
     expect(b.maxX).toBeLessThanOrEqual(100.001);
   });
+
+  it("rounds the START anchor of a closed subpath without skewing its edges", () => {
+    const ep = round("M0 0 L100 0 L100 100 L0 100 Z");
+    ep.subpaths[0].anchors[0].cornerRadius = 20;
+    const g = toGeometry(ep);
+    expect(g.segments.some((s) => s.type === "C")).toBe(true);
+    const b = geometryBounds(g);
+    expect(b.minX).toBeGreaterThanOrEqual(-0.001);
+    expect(b.minY).toBeGreaterThanOrEqual(-0.001);
+    expect(b.maxX).toBeLessThanOrEqual(100.001);
+    expect(b.maxY).toBeLessThanOrEqual(100.001);
+    // The three untouched corners must still be exact points on the outline.
+    const pts = g.segments
+      .filter((s) => s.type !== "Z")
+      .map((s) => ({ x: (s as { x: number }).x, y: (s as { y: number }).y }));
+    for (const c of [
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ]) {
+      expect(pts.some((p) => Math.hypot(p.x - c.x, p.y - c.y) < 1e-6)).toBe(true);
+    }
+    // The rounded corner is entered/left on the two edges adjacent to (0,0):
+    // one tangent point on the left edge and one on the top edge.
+    expect(pts.some((p) => Math.abs(p.x) < 1e-6 && Math.abs(p.y - 20) < 1e-6)).toBe(true);
+    expect(pts.some((p) => Math.abs(p.y) < 1e-6 && Math.abs(p.x - 20) < 1e-6)).toBe(true);
+  });
+
+  it("rounds every corner of a closed square at once", () => {
+    const ep = round("M0 0 L100 0 L100 100 L0 100 Z");
+    for (const a of ep.subpaths[0].anchors) a.cornerRadius = 20;
+    const g = toGeometry(ep);
+    expect(g.segments.filter((s) => s.type === "C")).toHaveLength(4);
+    const b = geometryBounds(g);
+    expect(b.minX).toBeGreaterThanOrEqual(-0.001);
+    expect(b.minY).toBeGreaterThanOrEqual(-0.001);
+    expect(b.maxX).toBeLessThanOrEqual(100.001);
+    expect(b.maxY).toBeLessThanOrEqual(100.001);
+    // No sharp corner point survives.
+    for (const s of g.segments) {
+      if (s.type === "Z") continue;
+      const p = s as { x: number; y: number };
+      for (const c of [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+      ]) {
+        expect(Math.hypot(p.x - c.x, p.y - c.y)).toBeGreaterThan(1e-6);
+      }
+    }
+  });
 });

@@ -29,6 +29,7 @@ import {
   moveAnchor,
   dragHandle,
   clampCornerRadius,
+  isRoundableCorner,
   anchorPoint,
   type EditablePath,
 } from "@/geometry/editablePath";
@@ -47,16 +48,22 @@ const SNAP_PX = 6;
 /** Screen-space pick radius (÷zoom → root units) for corner-tool body clicks. */
 const CORNER_PICK_PX = 24;
 
-/** Flat index of the anchor nearest `rootPt` (world coords) within `threshold`, or -1. */
+/**
+ * Flat index of the anchor nearest `rootPt` (world coords) within `threshold`,
+ * or -1. `roundableOnly` restricts the pick to corners the Corner tool can
+ * actually fillet, so a nearby curve anchor never swallows the press.
+ */
 function nearestAnchorFlatIndex(
   path: EditablePath,
   world: Matrix2D,
   rootPt: Point,
   threshold: number,
+  roundableOnly = false,
 ): number {
   let best = -1;
   let bestDist = threshold;
-  for (const { index, a } of flatAnchors(path)) {
+  for (const { index, sub, anchor, a } of flatAnchors(path)) {
+    if (roundableOnly && !isRoundableCorner(path.subpaths[sub], anchor)) continue;
     const w = applyToPoint(world, anchorPoint(a));
     const d = Math.hypot(w.x - rootPt.x, w.y - rootPt.y);
     if (d <= bestDist) {
@@ -65,6 +72,12 @@ function nearestAnchorFlatIndex(
     }
   }
   return best;
+}
+
+/** Is this flat anchor index a corner the Corner tool can round? */
+function roundableFlat(path: EditablePath, flatIndex: number): boolean {
+  const loc = locateAnchor(path, flatIndex);
+  return loc ? isRoundableCorner(path.subpaths[loc.sub], loc.anchor) : false;
 }
 
 type DragKind = "none" | "anchor" | "handle" | "radius";
@@ -210,10 +223,10 @@ export function usePathEditor(
         let cornerIdx = -1;
         if (radiusAttr) cornerIdx = Number(radiusAttr.getAttribute("data-pen-radius"));
         else if (anchorAttr) cornerIdx = Number(anchorAttr.getAttribute("data-pen-anchor"));
-        else {
+        if (cornerIdx < 0 || !roundableFlat(s.path, cornerIdx)) {
           const rootPt = toRoot(e.clientX, e.clientY);
           const threshold = CORNER_PICK_PX / store.getState().viewport.zoom;
-          cornerIdx = nearestAnchorFlatIndex(s.path, world, rootPt, threshold);
+          cornerIdx = nearestAnchorFlatIndex(s.path, world, rootPt, threshold, true);
         }
         if (cornerIdx >= 0) {
           const already = s.selected.includes(cornerIdx);

@@ -38,6 +38,17 @@ function drawPath(anchors: Array<{ x: number; y: number }>, closed: boolean): st
   return node.id;
 }
 
+/** On-curve/control points of every non-Z segment. */
+function pointsOf(segments: ReturnType<typeof parsePath>["geometry"]["segments"]) {
+  return segments
+    .filter((s) => s.type !== "Z")
+    .map((s) => ({ x: (s as { x: number }).x, y: (s as { y: number }).y }));
+}
+
+function near(a: { x: number; y: number }, b: { x: number; y: number }): boolean {
+  return Math.hypot(a.x - b.x, a.y - b.y) < 1e-6;
+}
+
 describe("custom path creation", () => {
   beforeEach(() => store().newDocument(400, 400));
 
@@ -96,6 +107,35 @@ describe("node editing — one entry per edit", () => {
     if (!r.ok) return;
     const re = r.nodes.find((n) => n.type === "path") as PathNode;
     expect(parsePath(re.d).geometry.segments.some((s) => s.type === "C")).toBe(true);
+  });
+
+  it("rounds the first corner exactly like any other corner", () => {
+    const square = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+    const shapeOf = (anchorIndex: number) => {
+      const id = drawPath(square, true);
+      openSession(id, [anchorIndex]);
+      setSelectedCornerRadius(20);
+      const segs = parsePath((store().document.nodes[id] as PathNode).d).geometry.segments;
+      return { types: segs.map((s) => s.type), pts: pointsOf(segs) };
+    };
+
+    // Whichever corner is picked, exactly that corner rounds: it disappears
+    // from the outline, the other three stay sharp, and nothing leaves the
+    // original square (a skewed edge would drag a point out of it).
+    square.forEach((rounded, i) => {
+      const { types, pts } = shapeOf(i);
+      expect(types.filter((t) => t === "C")).toHaveLength(1);
+      expect(pts.some((p) => near(p, rounded))).toBe(false);
+      for (const c of square.filter((_, j) => j !== i)) {
+        expect(pts.some((p) => near(p, c))).toBe(true);
+      }
+      for (const p of pts) {
+        expect(p.x).toBeGreaterThanOrEqual(-0.001);
+        expect(p.y).toBeGreaterThanOrEqual(-0.001);
+        expect(p.x).toBeLessThanOrEqual(100.001);
+        expect(p.y).toBeLessThanOrEqual(100.001);
+      }
+    });
   });
 
   it("converts a segment to a curve (one entry) and undoes cleanly", () => {

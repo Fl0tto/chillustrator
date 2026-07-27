@@ -209,6 +209,28 @@ function filletFor(
   return { p1, cubic: { type: "C", x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y, x: p2.x, y: p2.y } };
 }
 
+/**
+ * True when the anchor at `index` can carry a rounded corner — both adjacent
+ * segments must exist and be straight. Mirrors `filletFor`'s preconditions, and
+ * is what the Corner tool / overlay use to decide what is targetable.
+ */
+export function isRoundableCorner(sub: SubPath, index: number): boolean {
+  const n = sub.anchors.length;
+  if (n < 3) return false;
+  const a = sub.anchors[index];
+  if (!a) return false;
+  // An open subpath's endpoints have only one adjacent segment.
+  if (!sub.closed && (index === 0 || index === n - 1)) return false;
+  const prev = sub.anchors[(index - 1 + n) % n];
+  const next = sub.anchors[(index + 1) % n];
+  return (
+    isNullHandle(a, a.handleIn) &&
+    isNullHandle(a, a.handleOut) &&
+    isNullHandle(prev, prev.handleOut) &&
+    isNullHandle(next, next.handleIn)
+  );
+}
+
 function norm(v: Point): Point | null {
   const len = Math.hypot(v.x, v.y);
   if (len < EPS) return null;
@@ -227,46 +249,38 @@ export function toGeometry(path: EditablePath): PathGeometry {
       continue;
     }
 
-    // Build the ordered ring of anchors we traverse (closed repeats the first).
-    const ring: Anchor[] = sub.closed ? [...sub.anchors, sub.anchors[0]] : [...sub.anchors];
+    // Precompute a fillet per anchor. Only interior corners can round (for a
+    // closed subpath every anchor is interior); `null` = draw straight through.
+    // filletFor also guarantees both segments adjacent to a fillet are straight,
+    // so a filleted corner is always entered and left by a plain line.
+    const fillets = sub.anchors.map((a, i) => {
+      const interior = sub.closed || (i > 0 && i < n - 1);
+      if (!interior) return null;
+      return filletFor(sub.anchors[(i - 1 + n) % n], a, sub.anchors[(i + 1) % n]);
+    });
 
-    // Precompute fillets for interior corners (closed: every anchor is interior).
-    const startAnchor = sub.anchors[0];
-    const startFillet = sub.closed
-      ? filletFor(sub.anchors[n - 1], startAnchor, sub.anchors[1 % n])
-      : null;
+    // A filleted start anchor is *re-entered* by the closing segment, so the
+    // subpath must begin where its arc EXITS; the arc itself is emitted last.
+    const startFillet = fillets[0];
+    const start = startFillet
+      ? { x: startFillet.cubic.x, y: startFillet.cubic.y }
+      : anchorPoint(sub.anchors[0]);
+    segments.push({ type: "M", x: start.x, y: start.y });
 
-    // Move to the start (or its entry tangent point if the start is filleted).
-    if (startFillet) segments.push({ type: "M", x: startFillet.p1.x, y: startFillet.p1.y });
-    else segments.push({ type: "M", x: startAnchor.x, y: startAnchor.y });
-
-    for (let i = 1; i < ring.length; i++) {
-      const from = ring[i - 1];
-      const to = ring[i];
-      const isLastClosing = sub.closed && i === ring.length - 1;
-      const toAnchorIndex = isLastClosing ? 0 : i;
-      const interior = sub.closed || (toAnchorIndex > 0 && toAnchorIndex < n - 1);
-      const fillet = interior
-        ? filletFor(
-            ring[i - 1],
-            sub.anchors[toAnchorIndex],
-            sub.anchors[(toAnchorIndex + 1) % n],
-          )
-        : null;
-
-      if (fillet && !isLastClosing) {
-        // Straight run into the tangent point, then the rounding arc.
+    const steps = sub.closed ? n : n - 1;
+    for (let i = 1; i <= steps; i++) {
+      const from = sub.anchors[i - 1];
+      const toIndex = i % n;
+      const to = sub.anchors[toIndex];
+      const fillet = fillets[toIndex];
+      if (fillet) {
+        // Straight run into the entry tangent point, then the rounding arc.
         segments.push({ type: "L", x: fillet.p1.x, y: fillet.p1.y });
         segments.push(fillet.cubic);
-      } else if (isLastClosing) {
-        // Close back to the start (or its entry tangent when filleted). A plain
-        // straight close needs no explicit segment — the trailing Z draws it.
-        const target = startFillet
-          ? { ...startAnchor, x: startFillet.p1.x, y: startFillet.p1.y, handleIn: null }
-          : startAnchor;
-        const straightClose =
-          !startFillet && isNullHandle(from, from.handleOut) && isNullHandle(startAnchor, startAnchor.handleIn);
-        if (!straightClose) emitSegmentTo(state, from, target);
+      } else if (i === steps && sub.closed) {
+        // A plain straight close needs no explicit segment — Z draws it.
+        const straightClose = isNullHandle(from, from.handleOut) && isNullHandle(to, to.handleIn);
+        if (!straightClose) emitSegmentTo(state, from, to);
       } else {
         emitSegmentTo(state, from, to);
       }
