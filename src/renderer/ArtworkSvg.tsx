@@ -21,6 +21,7 @@ export const ArtworkSvg = forwardRef<SVGSVGElement>(function ArtworkSvg(_props, 
   const height = useEditorStore((s) => s.document.height);
   const viewport = useEditorStore(useShallow((s) => s.viewport));
   const showChecker = useEditorStore((s) => s.preferences.showCheckerboard);
+  const artboardColor = useEditorStore((s) => s.preferences.artboardColor);
   const showGrid = useEditorStore((s) => s.preferences.snapGrid);
   const gridSize = useEditorStore((s) => s.preferences.gridSize);
   const previewNode = useEditorStore((s) => s.interaction.previewNode);
@@ -63,7 +64,7 @@ export const ArtworkSvg = forwardRef<SVGSVGElement>(function ArtworkSvg(_props, 
           y={0}
           width={width}
           height={height}
-          fill={showChecker ? `url(#${CHECKER})` : "#ffffff"}
+          fill={showChecker ? `url(#${CHECKER})` : artboardColor}
           data-artboard="true"
         />
         {showGrid && gridSize > 0 && (
