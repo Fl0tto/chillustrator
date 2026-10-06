@@ -49,6 +49,7 @@ export type ToolId =
   | "text"
   | "build"
   | "pen"
+  | "curve"
   | "node"
   | "corner";
 
@@ -62,6 +63,8 @@ export interface Viewport {
 
 export interface Preferences {
   showCheckerboard: boolean;
+  /** Editor-only artboard preview color; never exported into the SVG. */
+  artboardColor: string;
   /** Smart alignment guides (edges/centers of other objects + artboard). */
   snapAlignment: boolean;
   /** Snap to the fixed pixel grid (`gridSize`). */
@@ -101,6 +104,18 @@ export interface PenDraftState {
   cursor: Point | null;
   /** True when the pointer is hovering the first anchor (would close the path). */
   overStart: boolean;
+}
+
+/** Live Curve-tool drawing session (transient; commits one PathNode on finish). */
+export interface CurveDraftState {
+  /** Placed endpoints in ROOT coordinates. */
+  points: Point[];
+  /** One signed bend value per committed segment (points.length - 1). */
+  bends: number[];
+  /** Live endpoint while the next segment is being dragged. */
+  cursor: Point | null;
+  /** Signed bend for the currently dragged segment only. */
+  activeBend: number;
 }
 
 /** Direct-selection (node) editing session for one PathNode. */
@@ -146,6 +161,7 @@ export interface EditorStore {
   interaction: InteractionState;
   shapeBuilder: ShapeBuilderState | null;
   penDraft: PenDraftState | null;
+  curveDraft: CurveDraftState | null;
   pathEdit: PathEditState | null;
 
   // --- persistent edits ---
@@ -193,6 +209,7 @@ export interface EditorStore {
 
   // --- pen / path editing ---
   setPenDraft: (draft: PenDraftState | null) => void;
+  setCurveDraft: (draft: CurveDraftState | null) => void;
   setPathEdit: (session: PathEditState | null) => void;
 }
 
@@ -200,6 +217,7 @@ const DEFAULT_VIEWPORT: Viewport = { zoom: 1, panX: 0, panY: 0 };
 
 const DEFAULT_PREFERENCES: Preferences = {
   showCheckerboard: true,
+  artboardColor: "#ffffff",
   snapAlignment: true,
   snapGrid: false,
   snapPoint: false,
@@ -241,6 +259,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   interaction: { ...EMPTY_INTERACTION },
   shapeBuilder: null,
   penDraft: null,
+  curveDraft: null,
   pathEdit: null,
 
   apply(command) {
@@ -329,6 +348,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selection: [],
         interaction: { ...EMPTY_INTERACTION },
         shapeBuilder: null,
+        penDraft: null,
+        curveDraft: null,
+        pathEdit: null,
       });
     } else {
       set({
@@ -337,6 +359,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selection: [],
         interaction: { ...EMPTY_INTERACTION },
         shapeBuilder: null,
+        penDraft: null,
+        curveDraft: null,
+        pathEdit: null,
       });
     }
   },
@@ -350,6 +375,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       editingTextId: null,
       interaction: { ...EMPTY_INTERACTION },
       shapeBuilder: null,
+      penDraft: null,
+      curveDraft: null,
+      pathEdit: null,
     });
   },
 
@@ -376,6 +404,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       editingTextId: null,
       shapeBuilder: tool === "build" ? get().shapeBuilder : null,
       penDraft: tool === "pen" ? get().penDraft : null,
+      curveDraft: tool === "curve" ? get().curveDraft : null,
       pathEdit: tool === "node" ? get().pathEdit : null,
     });
   },
@@ -446,6 +475,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   setPenDraft(draft) {
     set({ penDraft: draft });
+  },
+  setCurveDraft(draft) {
+    set({ curveDraft: draft });
   },
   setPathEdit(session) {
     set({ pathEdit: session });
