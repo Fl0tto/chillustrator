@@ -933,6 +933,7 @@ export function InspectorPanel() {
       {canWarp && <WarpSection node={primary} />}
       {single && !isImage && <EffectsSection node={primary} />}
       <PathEditFields />
+      <DocumentSection />
     </>
   );
 }
