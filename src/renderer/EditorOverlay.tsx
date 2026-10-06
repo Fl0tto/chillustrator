@@ -33,10 +33,10 @@ export const EditorOverlay = memo(function EditorOverlay() {
   const viewport = useViewport();
   const interaction = useInteraction();
   const tool = useTool();
-  // The Pen / node / corner editors draw their own anchor chrome instead. The
+  // The Pen / Curve / node / corner editors draw their own anchor chrome instead. The
   // resize handles in particular sit exactly on a shape's corners, so leaving
   // them up would swallow the Corner tool's press on the corner it targets.
-  const showSelection = tool !== "pen" && tool !== "node" && tool !== "corner";
+  const showSelection = tool !== "pen" && tool !== "curve" && tool !== "node" && tool !== "corner";
 
   return (
     <svg className="chill-overlay" width="100%" height="100%" pointerEvents="none">
