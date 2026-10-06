@@ -43,6 +43,7 @@ import {
   useViewport,
   usePreferences,
   usePathEdit,
+  useCurveDraft,
 } from "@/store/selectors";
 import { setSelectedCornerRadius } from "@/interactions/pathEditActions";
 import { locateAnchor } from "@/geometry/editablePath";
@@ -68,6 +69,7 @@ const TOOLS: { id: ToolId; icon: React.ReactNode; title: string; key: string }[]
   { id: "node", icon: <Spline size={18} />, title: "Edit path (direct-selection)", key: "A" },
   { id: "corner", icon: <Radius size={18} />, title: "Round corners", key: "C" },
   { id: "pen", icon: <PenTool size={18} />, title: "Pen", key: "P" },
+  { id: "curve", icon: <Spline size={18} />, title: "Curve path", key: "Q" },
   { id: "rect", icon: <Square size={18} />, title: "Rectangle", key: "R" },
   { id: "ellipse", icon: <Circle size={18} />, title: "Ellipse", key: "E" },
   { id: "line", icon: <Minus size={18} />, title: "Line", key: "L" },
@@ -550,6 +552,30 @@ function BuildBar() {
   );
 }
 
+function CurveBar() {
+  const tool = useTool();
+  const draft = useCurveDraft();
+  const setTool = useEditorStore((s) => s.setTool);
+  if (tool !== "curve") return null;
+
+  const segments = Math.max(0, (draft?.points.length ?? 0) - 1);
+  return (
+    <div className="chill-buildbar">
+      <Spline size={15} />
+      <span>
+        {draft
+          ? `Curve path · ${segments} segment${segments === 1 ? "" : "s"} — drag the next endpoint; scroll while dragging to bend / flip it.`
+          : "Click to set the start, then drag endpoints. Scroll while dragging to bend the active curve."}
+      </span>
+      <span className="spacer" style={{ flex: 1 }} />
+      <span style={{ opacity: 0.7 }}>Enter finish · X/Esc cancel · Backspace undo segment</span>
+      <button className="btn" onClick={() => setTool("select")}>
+        Cancel
+      </button>
+    </div>
+  );
+}
+
 function CornerBar() {
   const tool = useTool();
   const session = usePathEdit();
@@ -600,6 +626,7 @@ export function EditorShell() {
       <div className="chill-canvas">
         <CanvasStage />
         <BuildBar />
+        <CurveBar />
         <CornerBar />
       </div>
       <div className="chill-panels">
