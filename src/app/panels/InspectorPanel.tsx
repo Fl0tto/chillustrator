@@ -845,11 +845,19 @@ function DocumentSection() {
           title="Artboard preview color (editor only)"
         />
         <input
+          key={prefs.artboardColor}
           className="input"
-          value={prefs.artboardColor}
-          onChange={(e) => {
-            const value = e.target.value.trim();
-            if (/^#[0-9a-fA-F]{6}$/.test(value)) setPreferences({ artboardColor: value });
+          defaultValue={prefs.artboardColor}
+          onBlur={(e) => {
+            const value = e.currentTarget.value.trim();
+            if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+              setPreferences({ artboardColor: value });
+            } else {
+              e.currentTarget.value = prefs.artboardColor;
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
           }}
           aria-label="Artboard preview color"
         />
