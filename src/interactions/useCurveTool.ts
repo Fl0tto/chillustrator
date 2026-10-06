@@ -25,6 +25,7 @@ import {
   snapPoint,
   snapToGrid,
   type SnapCandidates,
+  type SnapGuide,
 } from "./snapping";
 
 const PATH_PRECISION = 4;
@@ -75,7 +76,7 @@ export function useCurveTool(hostRef: RefObject<HTMLDivElement | null>): void {
       }
 
       let next = p;
-      const guides = [];
+      const guides: SnapGuide[] = [];
       if (prefs.snapAlignment) {
         const r = snapPoint(next, ensureCandidates(), snapThreshold());
         next = { x: r.x, y: r.y };
