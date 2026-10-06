@@ -41,12 +41,14 @@ Live progress: [`docs/implementation-status.md`](docs/implementation-status.md).
 
 | Key | Action |
 |---|---|
-| `V R E L G T` | Select / Rect / Ellipse / Line / Polygon / Text |\n| `P A C Q` | Pen / Edit path / Round corners / Curve path |
+| `V R E L G T` | Select / Rect / Ellipse / Line / Polygon / Text |
+| `P A C Q` | Pen / Edit path / Round corners / Curve path |
 | `Ctrl/Cmd + Z` | Undo · `Ctrl/Cmd + Shift + Z` Redo |
 | `Delete` / `Backspace` | Delete selection |
 | Arrows | Nudge (Shift = ×10) |
 | `Space` + drag / middle-drag | Pan · wheel = zoom |
-| `Q` curve tool | Drag endpoints · wheel = bend/flip active segment · `Enter` finish · `X`/`Esc` cancel |\n| `Esc` | Cancel / back to Select |
+| `Q` curve tool | Drag endpoints · wheel = bend/flip active segment · `Enter` finish · `X`/`Esc` cancel |
+| `Esc` | Cancel / back to Select |
 
 ## Architecture (short version)
 
