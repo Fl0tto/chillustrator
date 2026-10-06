@@ -246,6 +246,7 @@ export function useCanvasController(
       if (
         state.tool === "build" ||
         state.tool === "pen" ||
+        state.tool === "curve" ||
         state.tool === "node" ||
         state.tool === "corner"
       ) {
@@ -579,8 +580,11 @@ export function useCanvasController(
 
     // ---- wheel zoom ---------------------------------------------------------
     const onWheel = (e: WheelEvent) => {
+      const wheelState = store.getState();
+      // The Curve tool owns the wheel while an active segment is being dragged.
+      if (wheelState.tool === "curve" && wheelState.curveDraft?.cursor) return;
       e.preventDefault();
-      const vp = store.getState().viewport;
+      const vp = wheelState.viewport;
       const rect = hostRect();
       const localX = e.clientX - rect.left;
       const localY = e.clientY - rect.top;
@@ -613,7 +617,7 @@ export function useCanvasController(
       const key = e.key.toLowerCase();
       // While the Pen / node editors are active they own Escape/Enter/Backspace
       // and arrow keys; skip the destructive selection shortcuts for them.
-      const modal = s.tool === "pen" || s.tool === "node";
+      const modal = s.tool === "pen" || s.tool === "curve" || s.tool === "node";
 
       // Undo / redo (HST-010).
       if (mod && key === "z") {
@@ -700,6 +704,7 @@ export function useCanvasController(
           t: () => s.setTool("text"),
           b: () => s.setTool("build"),
           p: () => s.setTool("pen"),
+          q: () => s.setTool("curve"),
           c: () => s.setTool("corner"),
         };
         const fn = tools[key];
