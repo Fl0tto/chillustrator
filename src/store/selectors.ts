@@ -64,6 +64,10 @@ export function usePenDraft() {
   return useEditorStore((s) => s.penDraft);
 }
 
+export function useCurveDraft() {
+  return useEditorStore((s) => s.curveDraft);
+}
+
 export function usePathEdit() {
   return useEditorStore((s) => s.pathEdit);
 }

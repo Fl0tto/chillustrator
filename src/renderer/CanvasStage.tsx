@@ -11,12 +11,14 @@ import { EditorOverlay } from "./EditorOverlay";
 import { ShapeBuilderOverlay } from "./ShapeBuilderOverlay";
 import { GuidesOverlay } from "./GuidesOverlay";
 import { PenOverlay } from "./PenOverlay";
+import { CurveOverlay } from "./CurveOverlay";
 import { PathEditOverlay } from "./PathEditOverlay";
 import { TextEditOverlay } from "./TextEditOverlay";
 import { useCanvasController } from "@/interactions/useCanvasController";
 import { useHoverController } from "@/interactions/useHoverController";
 import { useShapeBuilder } from "@/interactions/useShapeBuilder";
 import { usePenTool } from "@/interactions/usePenTool";
+import { useCurveTool } from "@/interactions/useCurveTool";
 import { usePathEditor } from "@/interactions/usePathEditor";
 import { useEditorStore } from "@/store/editorStore";
 import { fitToRect } from "@/geometry/viewport";
@@ -29,6 +31,7 @@ export function CanvasStage() {
   useHoverController(hostRef);
   useShapeBuilder(hostRef);
   usePenTool(hostRef);
+  useCurveTool(hostRef);
   usePathEditor(hostRef, svgRef);
 
   // Fit the artboard into view once on mount.
@@ -47,6 +50,7 @@ export function CanvasStage() {
       <EditorOverlay />
       <GuidesOverlay />
       <PenOverlay />
+      <CurveOverlay />
       <PathEditOverlay />
       <ShapeBuilderOverlay />
       <TextEditOverlay />

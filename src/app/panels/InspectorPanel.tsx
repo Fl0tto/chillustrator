@@ -813,6 +813,63 @@ function PathEditFields() {
   );
 }
 
+
+function DocumentSection() {
+  const size = useEditorStore(useShallow((s) => ({
+    width: s.document.width,
+    height: s.document.height,
+  })));
+  const prefs = useEditorStore(useShallow((s) => s.preferences));
+  const setDocumentSize = useEditorStore((s) => s.setDocumentSize);
+  const setPreferences = useEditorStore((s) => s.setPreferences);
+
+  const setWidth = (width: number) => {
+    if (Number.isFinite(width) && width > 0) setDocumentSize(width, size.height);
+  };
+  const setHeight = (height: number) => {
+    if (Number.isFinite(height) && height > 0) setDocumentSize(size.width, height);
+  };
+
+  return (
+    <div className="panel-section">
+      <h3 className="panel-title">Canvas</h3>
+      <NumberField label="Width" value={size.width} min={1} onCommit={setWidth} />
+      <NumberField label="Height" value={size.height} min={1} onCommit={setHeight} />
+      <div className="field-row">
+        <label>Preview</label>
+        <input
+          type="color"
+          className="color-swatch"
+          value={/^#[0-9a-fA-F]{6}$/.test(prefs.artboardColor) ? prefs.artboardColor : "#ffffff"}
+          onChange={(e) => setPreferences({ artboardColor: e.target.value })}
+          title="Artboard preview color (editor only)"
+        />
+        <input
+          key={prefs.artboardColor}
+          className="input"
+          defaultValue={prefs.artboardColor}
+          onBlur={(e) => {
+            const value = e.currentTarget.value.trim();
+            if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+              setPreferences({ artboardColor: value });
+            } else {
+              e.currentTarget.value = prefs.artboardColor;
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+          aria-label="Artboard preview color"
+        />
+      </div>
+      <div className="empty-hint" style={{ padding: "6px 0", textAlign: "left" }}>
+        Preview color is editor-only and does not add a background shape to exported SVG.
+        {prefs.showCheckerboard ? " Turn off the checkerboard to see it." : ""}
+      </div>
+    </div>
+  );
+}
+
 /** Common value across a list, or null when they differ ("Mixed"). */
 function common<T>(values: T[]): T | null {
   if (values.length === 0) return null;
@@ -829,10 +886,13 @@ export function InspectorPanel() {
 
   if (nodes.length === 0 && !pathEdit) {
     return (
-      <div className="panel-section">
-        <h3 className="panel-title">Inspector</h3>
-        <div className="empty-hint">Select an object to edit its properties.</div>
-      </div>
+      <>
+        <div className="panel-section">
+          <h3 className="panel-title">Inspector</h3>
+          <div className="empty-hint">Select an object to edit its properties.</div>
+        </div>
+        <DocumentSection />
+      </>
     );
   }
 
@@ -873,6 +933,7 @@ export function InspectorPanel() {
       {canWarp && <WarpSection node={primary} />}
       {single && !isImage && <EffectsSection node={primary} />}
       <PathEditFields />
+      <DocumentSection />
     </>
   );
 }
