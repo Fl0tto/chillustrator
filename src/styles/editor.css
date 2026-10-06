@@ -70,6 +70,7 @@
 .chill-overlay,
 .chill-guides,
 .chill-pen,
+.chill-curve,
 .chill-pathedit,
 .chill-sb-overlay {
   position: absolute;
@@ -80,6 +81,7 @@
 .chill-overlay,
 .chill-guides,
 .chill-pen,
+.chill-curve,
 .chill-pathedit,
 .chill-sb-overlay {
   pointer-events: none;
